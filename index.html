@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brand Review Desk - Team 24CS073</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <div class="rail">
+    <div class="brand"><div class="bmark">BR</div><div class="bname">Brand Review<br>Desk</div></div>
+    <div class="nav">
+      <button class="ni active" data-view="review"><span class="ic">&#10022;</span>Review Content</button>
+      <button class="ni" data-view="rules"><span class="ic">&#9708;</span>Brand Rules</button>
+      <button class="ni" data-view="history"><span class="ic">&#9719;</span>History</button>
+      <button class="ni" data-view="insights"><span class="ic">&#9684;</span>Insights</button>
+    </div>
+    <div class="railfoot">Team 24CS073 &middot; CodeNexus India 2026<br>Rule-based checks &middot; human decides</div>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+<div class="toast" id="toast"></div>
+<div id="modalroot"></div>
+<script src="vendor/tesseract.min.js"></script>
+<script src="data/default-rules.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

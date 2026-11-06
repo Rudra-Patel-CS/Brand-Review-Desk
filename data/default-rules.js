@@ -1,0 +1,48 @@
+window.DEFAULT_RULESET = {
+  "brand": "Arka Foods (demo)",
+  "rulesetName": "Arka Foods Brand Rules",
+  "version": "v3",
+  "note": "Fictional demo ruleset for CodeNexus Round 2. Edit these or import your own JSON with the same shape.",
+  "approvedFacts": [
+    { "id": "FACT-04", "text": "Gujarat ka apna snacks brand, 2018 se", "source": { "doc": "Arka Brand Book", "version": "v3", "quote": "Approved non-comparative positioning line: 'Gujarat ka apna snacks brand, 2018 se'." } }
+  ],
+  "rules": [
+    {
+      "id": "FACT-01",
+      "name": "Unsubstantiated Claim",
+      "category": "Claims & Evidence",
+      "type": "claim",
+      "severity": "high",
+      "patterns": ["\\bno\\.?\\s*1\\b", "\\bnumber\\s+one\\b", "\\bbest\\b", "\\bbiggest\\b", "\\bleading\\b", "\\bmost\\s+trusted\\b", "\\bsabse\\b", "#1"],
+      "regex": true,
+      "why": "Brand rule FACT-01 (Claims & Evidence) requires any 'No.1', 'Best' or similar superiority claim to have an approved, up-to-date source on file.",
+      "suggestion": { "kind": "replace", "text": "Gujarat ka apna snacks brand, 2018 se", "note": "Approved fact FACT-04, non-comparative." },
+      "source": { "doc": "Arka Brand Book", "version": "v3", "quote": "Superiority claims (No.1, best, biggest, leading) must carry an approved evidence source on file." }
+    },
+    {
+      "id": "TONE-04",
+      "name": "Tone Mismatch",
+      "category": "Tone of Voice",
+      "type": "phrase",
+      "severity": "medium",
+      "patterns": ["we're obsessed with", "we are obsessed with", "obsessed", "crazy good", "insanely", "addictive"],
+      "regex": false,
+      "why": "Tone rule TONE-04: Arka's voice is warm and family-first, not hype-driven. Words like 'obsessed' push a hype tone the brand book disallows.",
+      "suggestion": { "kind": "replace", "text": "we love", "note": "Keeps the writer's intent, stays warm without hype." },
+      "source": { "doc": "Arka Tone Guide", "version": "v3", "quote": "Avoid hype wording (obsessed, addictive, insanely). Prefer warm, family-first language." }
+    },
+    {
+      "id": "TERM-02",
+      "name": "Terminology",
+      "category": "Approved Terminology",
+      "type": "phrase",
+      "severity": "low",
+      "patterns": ["vegan-friendly", "vegan friendly"],
+      "regex": false,
+      "why": "Terminology rule TERM-02: the approved customer-facing term is 'plant-based'. 'Vegan-friendly' is retired wording from the 2023 guidelines.",
+      "suggestion": { "kind": "replace", "text": "plant-based", "note": "Approved term per TERM-02." },
+      "source": { "doc": "Arka Terminology List", "version": "v3", "quote": "Say 'plant-based', not 'vegan-friendly'." }
+    }
+  ]
+}
+;
