@@ -2,39 +2,31 @@
 
 # Brand Review Desk
 
-### A focused workspace for reviewing creative campaigns against brand rules.
+### Choose a campaign. Review its flags. Record a decision.
 
-Review campaign copy, inspect compliance findings, manage rulebooks, and keep a local review archive in a responsive React interface.
+An interactive prototype for checking campaign copy against brand rules.
 
 ![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-required-339933?logo=nodedotjs&logoColor=white)
 
 </div>
 
----
+## The whole workflow at a glance
 
-<div align="center">
+![Brand Review Desk quick-start guide: choose a campaign, inspect findings, resolve critical issues, then approve and export](public/assets/readme/brand-review-quickstart.png)
 
-[Overview](#overview) · [Quick start](#quick-start) · [Features](#features) · [Optional API](#optional-express--mongodb-api) · [Project layout](#project-layout)
+**Start with a demo:** sample campaigns already have example rules and findings. No setup is needed.
 
-</div>
+**Review your own brand:** you must add your brand’s rules. A logo, product photo, or ad image does not tell the app what your brand allows.
 
-## Overview
+> **Important:** uploaded-image OCR is simulated in this prototype. The app does not actually read text from your uploaded image. The scan, OCR text, confidence values, and resulting finding are examples.
 
-Brand Review Desk is a responsive campaign-review prototype. It includes sample campaigns for **FreshBites Organic**, **Arka Foods**, and **NovaTech Solutions**, plus a rule-based compliance review workflow.
+## Try your first review
 
-> **Current app behavior:** the React interface uses built-in demo data. Brand rules and review history are saved in the browser's `localStorage`. The Express/MongoDB API is a separate optional service and is not currently connected to the React interface.
+### 1. Start the app
 
-## Quick start
-
-### Requirements
-
-- Node.js 18 or newer
-- npm
-
-### Run the React app
+Install [Node.js 18+](https://nodejs.org/), open a terminal in this project folder, and run:
 
 ```bash
 npm install
@@ -43,112 +35,115 @@ npm run dev
 
 Open **http://localhost:3000**.
 
-No MongoDB account or `.env` file is needed to explore the React app.
+### 2. Choose a sample campaign
 
-### Build for production
+Open **Review**, then select one of the campaign cards along the top. The app selects that campaign’s demo brand and shows its artwork, caption, and sample findings.
+
+### 3. Understand and resolve a finding
+
+Select a finding or its marker on the artwork to inspect the matched phrase and the rule explanation.
+
+| Button | What happens |
+| --- | --- |
+| **Apply Suggestion** | Replaces the matched caption phrase when applicable and marks the finding resolved. |
+| **Mark Reviewed** | Records a manual review decision. |
+| **Dismiss w/ Note** | Opens a note dialog. Saving dismissal is not reliably implemented in this prototype yet. |
+| **Undo Decision** | Reopens a resolved finding. |
+
+Critical findings must be resolved before the approval button becomes available.
+
+### 4. Approve and find the review
+
+Click **Approve & Export Review Pack**. In the confirmation dialog, **Download Audit JSON** saves a file. Confirming adds the review to **History**.
+
+## What about my own brand?
+
+Go to **Rules** and add checks that your organization actually uses. For example:
+
+- Terms or claims that must be flagged
+- Required disclosures
+- Approved product wording or facts
+- A reason and suggested correction for each rule
+
+Use **Test Copy Sandbox** to check a rule against sample text. You can change rules without setting up MongoDB; they are stored in this browser. The included brands and rules are examples, not legal or brand advice.
+
+| Your goal | What to do |
+| --- | --- |
+| Explore the app | Choose a demo campaign. Existing demo rules are enough. |
+| Check your own campaign copy | Add appropriate rules first, then review the caption and supplied text. |
+| Upload a logo or brand photo | You can add it as campaign artwork, but it will not create a brand profile or rules. |
+
+## What the other sections do
+
+- **Rules** — search, add, edit, enable/disable, test, export, or reset the demo rules.
+- **History** — view reviews saved in this browser.
+- **Insights** — explore sample charts. They are not live organization analytics.
+
+<details>
+<summary><strong>See the app screen previews</strong></summary>
+
+These are visual previews with sample content.
+
+<p align="center"><strong>Review</strong><br><img src="public/assets/aistudio/screen_5bb56644.png" alt="Mobile preview of the campaign review screen" width="300"></p>
+<p align="center"><strong>Rules</strong><br><img src="public/assets/aistudio/screen_6c11f376.png" alt="Mobile preview of the brand rules screen" width="300"></p>
+
+</details>
+
+## What is and isn’t real yet
+
+| Works in the prototype | Demo or not connected yet |
+| --- | --- |
+| Browse sample brands and campaigns | OCR from an uploaded image (simulated) |
+| Match provided caption/OCR text against configured rules | Learning brand rules from a logo or photo |
+| Edit rules and try the copy sandbox | Shared team accounts or cross-device syncing |
+| Record sample approvals and view History | React app syncing with the optional MongoDB API |
+
+Rules and review history are saved in the current browser’s local storage. Uploaded campaigns last only for the current app session. Do not use prototype results as a real legal certification or production audit record.
+
+## Developer notes
+
+<details>
+<summary><strong>Build, API setup, and project layout</strong></summary>
+
+### Build the web app
 
 ```bash
 npm run build
 npm run preview
 ```
 
-Vite serves the production build locally after the build completes.
+### Optional Express / MongoDB API
 
-## Features
-
-| Workspace | What you can do |
-| --- | --- |
-| **Review** | Select demo campaigns, inspect rule findings, edit copy, and record review decisions. |
-| **Brand rules** | Browse, add, edit, enable, disable, reset, and export rules. |
-| **History** | Review saved demo decisions and export review records. |
-| **Insights** | Explore demo compliance summaries and export analytics data. |
-| **Campaign intake** | Add an image and campaign details to the current session. |
-
-The compliance engine evaluates campaign captions and supplied OCR text against enabled, brand-specific regular expressions. The interface includes example OCR text and findings; **image text extraction is currently simulated rather than performed by a live OCR engine**. Treat generated findings, review attestations, and analytics as prototype data—not legal advice or a production audit record.
-
-## Optional Express / MongoDB API
-
-The repository also includes an Express API backed by MongoDB. This service is independent of the React app at present; starting it does not make the React screens use MongoDB.
-
-### Configure the API
+The repository includes an Express API, but it is separate from the React app. Starting it does **not** connect the web interface to MongoDB.
 
 1. Copy `.env.example` to `.env`.
-2. Set `MONGO_URI` to a MongoDB connection string you control.
-3. Keep the database name in `DB_NAME` (defaults to `Brand_Review_Desk`) and set the API port to `BACKEND_PORT=5001`.
+2. Set `MONGO_URI` to your MongoDB connection string. Keep `.env` private.
+3. Optionally set `DB_NAME` (default `Brand_Review_Desk`) and `BACKEND_PORT=5001`.
+4. Run `npm start`; check `http://localhost:5001/api/status`.
 
-Keep `.env` private. It is ignored by Git; do not put database credentials in source files or documentation.
-
-### Start the API
-
-```bash
-npm start
-```
-
-The API listens on **http://localhost:5001** when `BACKEND_PORT=5001` is set. Check the database/API status with:
-
-```bash
-curl http://localhost:5001/api/status
-```
-
-The response reports whether MongoDB connected. If it did, `connected` is `true`; otherwise, the API reports fallback status.
-
-### Seed demo records (optional)
-
-```bash
-npm run seed
-```
-
-**Warning:** seeding clears and replaces the `brands`, `rules`, `rulesets`, `campaigns`, `drafts`, and `reviews` collections in the configured database. Back up any data you need before running it.
-
-### API routes
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/status` | Database connection and collection status |
-| `POST` | `/api/connect` | Re-check the database connection |
-| `GET`, `POST` | `/api/ruleset` | Read or save the active ruleset |
-| `POST` | `/api/ruleset/reset` | Restore the default ruleset |
-| `GET`, `POST` | `/api/draft` | Read or save a draft |
-| `GET`, `POST` | `/api/reviews` | List or add reviews |
-| `DELETE` | `/api/reviews/:id` | Delete a review |
-| `GET` | `/api/brands` | List brands |
-| `GET` | `/api/insights` | Read insight summaries |
-
-## Data and privacy
-
-- The React prototype stores rules and review history in the current browser profile's `localStorage`.
-- Campaigns and other initial screen content are bundled demo data.
-- The optional API uses MongoDB only when configured and started separately.
-- Never commit `.env` or use real customer data in the prototype.
-
-## Project layout
+`npm run seed` replaces demo records in the configured database. Do not run it where existing data must be kept.
 
 ```text
-src/
-  components/       React screens and dialogs
-  data/             Demo brands, campaigns, and review records
-  utils/            Compliance rule types and matching engine
-scripts/
-  seed_mongodb.js   Optional MongoDB demo-data seeder
-server.js           Optional Express API
-db.js               MongoDB connection and API data operations
-vite.config.ts      Vite, React, Tailwind, and /api proxy configuration
+src/components/   React screens, navigation, and dialogs
+src/data/         Sample brands, campaigns, and reviews
+src/utils/        Rule types and compliance matching
+public/assets/    Campaign art, UI references, and README workflow image
+server.js         Optional Express API
+db.js             MongoDB connection and data operations
 ```
 
-## npm scripts
-
-| Command | Description |
+| Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start the Vite development server on port `3000` |
-| `npm run build` | Create the production client build |
-| `npm run preview` | Preview the production build locally |
-| `npm start` | Start the Express API server |
-| `npm run seed` | Replace demo records in the configured MongoDB database |
+| `npm run dev` | Start the web app on port 3000 |
+| `npm run build` | Build the frontend |
+| `npm run preview` | Preview the production build |
+| `npm start` | Start the optional API |
+| `npm run seed` | Replace demo database records |
 
----
+</details>
 
 <div align="center">
 
-Built for clearer, more explainable campaign reviews.
+**For a quick demo, choose a campaign. For your own brand, add your rules first.**
 
 </div>
