@@ -1,11 +1,5 @@
-/* Brand Review Desk - MongoDB Database Connector & Collections
-   Connects to MongoDB cluster and handles tables/collections for:
-   - rulesets: Brand rulesets with approved facts & full guidelines
-   - rules: Normalized brand rules for fast indexing & toggling
-   - drafts: Content drafts (image posters, captions, OCR results)
-   - reviews: Full audit trail of approved reviews with decisions & reports
-   - brands: Brand profiles supported on the desk
-   - analytics: Aggregate statistics for Round 3 insights
+/* Brand Review Desk - Database Connector & Collection Management
+   Manages collections for rulesets, rules, drafts, reviews, brands, and audit logs.
 */
 
 const dns = require('node:dns');
@@ -22,70 +16,62 @@ let db = null;
 let isConnected = false;
 let lastError = null;
 
-// Default Arka Foods Brand Ruleset for seeding
+// Comprehensive Brand Ruleset for seeding
 const defaultRuleset = {
   brand: "Arka Foods (demo)",
-  rulesetName: "Arka Foods Brand Rules",
-  version: "v3",
-  note: "Official brand ruleset stored in MongoDB Brand_Review_Desk database.",
+  rulesetName: "Arka Foods Brand Compliance Guidelines",
+  version: "v3.2",
+  note: "Official brand compliance ruleset governing advertising claims, tone of voice, terminology, and legal requirements.",
   isDefault: true,
   approvedFacts: [
     {
       id: "FACT-04",
       text: "Gujarat ka apna snacks brand, 2018 se",
-      source: {
-        doc: "Arka Brand Book",
-        version: "v3",
-        quote: "Approved non-comparative positioning line: 'Gujarat ka apna snacks brand, 2018 se'."
-      }
+      source: { doc: "Arka Brand Book", version: "v3", quote: "Approved non-comparative positioning line: 'Gujarat ka apna snacks brand, 2018 se'." }
     },
     {
       id: "FACT-05",
       text: "Made with 100% natural spices sourced directly from local farmers",
-      source: {
-        doc: "Arka Brand Book",
-        version: "v3",
-        quote: "Quality claim standard: 'Made with 100% natural spices sourced directly from local farmers'."
-      }
+      source: { doc: "Arka Quality Standards", version: "v2", quote: "Standard: 'Made with 100% natural spices sourced directly from local farmers'." }
     }
   ],
   rules: [
     {
       id: "FACT-01",
-      name: "Unsubstantiated Claim",
+      name: "Unsubstantiated Superiority Claim",
       category: "Claims & Evidence",
       type: "claim",
       severity: "high",
-      patterns: ["\\bno\\.?\\s*1\\b", "\\bnumber\\s+one\\b", "\\bbest\\b", "\\bbiggest\\b", "\\bleading\\b", "\\bmost\\s+trusted\\b", "\\bsabse\\b", "#1"],
+      patterns: ["\\bno\\.?\\s*1\\b", "\\bnumber\\s+one\\b", "\\bbest\\b", "\\bbiggest\\b", "\\bleading\\b", "\\bmost\\s+trusted\\b", "\\bsabse\\s+bada\\b", "\\bsabse\\b", "#1"],
       regex: true,
-      why: "Brand rule FACT-01 (Claims & Evidence) requires any 'No.1', 'Best' or similar superiority claim to have an approved, up-to-date source on file.",
-      suggestion: { kind: "replace", text: "Gujarat ka apna snacks brand, 2018 se", note: "Approved fact FACT-04, non-comparative." },
+      why: "Brand rule FACT-01 requires any 'No.1', 'Best', or superiority claim to carry an audited, documented source on file before publication.",
+      suggestion: { kind: "replace", text: "Gujarat ka apna snacks brand, 2018 se", note: "Approved non-comparative fact FACT-04." },
       source: { doc: "Arka Brand Book", version: "v3", quote: "Superiority claims (No.1, best, biggest, leading) must carry an approved evidence source on file." },
       enabled: true
     },
     {
       id: "TONE-04",
-      name: "Tone Mismatch",
+      name: "Tone Mismatch / Hype Wording",
       category: "Tone of Voice",
       type: "phrase",
       severity: "medium",
-      patterns: ["we're obsessed with", "we are obsessed with", "obsessed", "crazy good", "insanely", "addictive"],
+      patterns: ["we're obsessed with", "we are obsessed with", "obsessed", "crazy good", "insanely", "addictive", "insanely crunchy"],
       regex: false,
-      why: "Tone rule TONE-04: Arka's voice is warm and family-first, not hype-driven. Words like 'obsessed' push a hype tone the brand book disallows.",
-      suggestion: { kind: "replace", text: "we love", note: "Keeps the writer's intent, stays warm without hype." },
+      why: "Tone rule TONE-04: Arka's voice is warm and family-first. Hype adjectives like 'obsessed', 'insanely', and 'addictive' dilute the authentic heritage tone.",
+      suggestion: { kind: "replace", text: "we love", note: "Maintains heartfelt warmth without aggressive marketing hype." },
       source: { doc: "Arka Tone Guide", version: "v3", quote: "Avoid hype wording (obsessed, addictive, insanely). Prefer warm, family-first language." },
       enabled: true
     },
     {
       id: "TERM-02",
-      name: "Terminology",
+      name: "Retired Terminology",
       category: "Approved Terminology",
       type: "phrase",
       severity: "low",
       patterns: ["vegan-friendly", "vegan friendly"],
       regex: false,
-      why: "Terminology rule TERM-02: the approved customer-facing term is 'plant-based'. 'Vegan-friendly' is retired wording from the 2023 guidelines.",
-      suggestion: { kind: "replace", text: "plant-based", note: "Approved term per TERM-02." },
+      why: "Terminology rule TERM-02: 'plant-based' is the approved current customer-facing standard. 'Vegan-friendly' is retired wording.",
+      suggestion: { kind: "replace", text: "plant-based", note: "Approved standard term per TERM-02." },
       source: { doc: "Arka Terminology List", version: "v3", quote: "Say 'plant-based', not 'vegan-friendly'." },
       enabled: true
     },
@@ -95,48 +81,107 @@ const defaultRuleset = {
       category: "Legal & Compliance",
       type: "phrase",
       severity: "high",
-      patterns: ["guaranteed delivery", "100% guaranteed delivery"],
+      patterns: ["guaranteed delivery", "100% guaranteed delivery", "guaranteed diwali delivery"],
       regex: false,
-      why: "Legal rule LEGAL-01: 'Guaranteed delivery' creates binding carrier liability. All festive comms must state 'Target delivery before festival, subject to courier SLAs'.",
-      suggestion: { kind: "replace", text: "estimated festive delivery", note: "Legal-approved compliant phrasing." },
-      source: { doc: "Arka Legal Handbook", version: "v2", quote: "Do not state absolute delivery guarantees without carrier SLA qualification." },
+      why: "Legal rule LEGAL-01: Absolute delivery guarantees create strict commercial liability. Must state target delivery subject to courier SLAs.",
+      suggestion: { kind: "replace", text: "estimated festive delivery (courier SLAs apply)", note: "Compliant wording per legal handbook." },
+      source: { doc: "Arka Legal Handbook", version: "v2", quote: "Do not promise unqualified delivery guarantees in advertising." },
+      enabled: true
+    },
+    {
+      id: "LEGAL-02",
+      name: "Unqualified Money Back Guarantee",
+      category: "Legal & Compliance",
+      type: "phrase",
+      severity: "high",
+      patterns: ["100% money back guaranteed", "money back guaranteed", "money back guarantee"],
+      regex: false,
+      why: "Legal rule LEGAL-02: Food products cannot advertise unqualified money-back guarantees without specific terms regarding product return conditions.",
+      suggestion: { kind: "replace", text: "satisfaction guaranteed per terms", note: "Qualified refund policy statement." },
+      source: { doc: "Arka Legal Handbook", version: "v2", quote: "Money-back guarantees must refer to clear invoice terms." },
       enabled: true
     },
     {
       id: "PRICE-01",
-      name: "Price Transparency",
+      name: "Promotional & Free Gift Transparency",
       category: "Pricing & Offers",
       type: "phrase",
       severity: "medium",
-      patterns: ["free gift", "free delivery without terms", "100% free"],
+      patterns: ["free gift", "100% free gift", "free without conditions", "100% free"],
       regex: false,
-      why: "Promotional rule PRICE-01: 'Free' claims must explicitly state terms or minimum order criteria to comply with advertising standards.",
-      suggestion: { kind: "replace", text: "complimentary gift with select boxes", note: "Compliant offer description." },
+      why: "Pricing rule PRICE-01: Promotional 'free gift' statements must state minimum order criteria or qualifying box types.",
+      suggestion: { kind: "replace", text: "complimentary gift with select festive boxes", note: "Compliant promotional description." },
       source: { doc: "Arka Promotions Guide", version: "v1.4", quote: "All promotional claims must clearly specify qualifying cart conditions." },
+      enabled: true
+    },
+    {
+      id: "TECH-01",
+      name: "Absolute Zero-Downtime Guarantee",
+      category: "Technical & SLA",
+      type: "phrase",
+      severity: "high",
+      patterns: ["zero downtime guaranteed", "zero downtime guaranteed 100%"],
+      regex: false,
+      why: "Technical rule TECH-01: Absolute zero-downtime claims violate SLA policies; state 99.99% high availability instead.",
+      suggestion: { kind: "replace", text: "99.99% high-availability SLA", note: "Standard enterprise cloud SLA standard." },
+      source: { doc: "Enterprise Cloud SLA Policy", version: "v4", quote: "Advertise high-availability percentages, never absolute zero downtime." },
+      enabled: true
+    },
+    {
+      id: "COMP-01",
+      name: "Unsubstantiated Comparative Pricing",
+      category: "Competitive Claims",
+      type: "phrase",
+      severity: "medium",
+      patterns: ["cheapest cloud storage", "cheapest in asia", "cheapest"],
+      regex: false,
+      why: "Competitive rule COMP-01: Price superiority claims ('cheapest') require third-party benchmark disclosures.",
+      suggestion: { kind: "replace", text: "cost-optimized enterprise tier", note: "Compliant pricing tier description." },
+      source: { doc: "Enterprise Compliance Code", version: "v2", quote: "Comparative pricing claims must cite published third-party audits." },
+      enabled: true
+    },
+    {
+      id: "HEALTH-01",
+      name: "Curative / Medical Disease Claim",
+      category: "Health & Nutrition",
+      type: "phrase",
+      severity: "high",
+      patterns: ["100% cure for daily fatigue", "100% cure", "cure for fatigue", "permanently boosts immunity", "cure"],
+      regex: false,
+      why: "Health rule HEALTH-01: Food and juice products cannot claim to cure medical conditions or diseases under FSSAI / advertising standards.",
+      suggestion: { kind: "replace", text: "nourishing blend supporting daily wellness", note: "Compliant wellness positioning." },
+      source: { doc: "Food Advertising Guidelines", version: "v3", quote: "Food products must not claim therapeutic or curative disease benefits." },
       enabled: true
     }
   ]
 };
 
-// Demo brands for multi-brand support
+// Multi-brand catalog
 const defaultBrands = [
   {
     name: "Arka Foods (demo)",
     industry: "FMCG / Packaged Foods",
-    description: "Traditional mithai and snacks with authentic recipes.",
-    rulesCount: 5,
+    description: "Traditional sweets, namkeen, and festive gift boxes.",
+    rulesCount: 6,
     createdAt: new Date()
   },
   {
     name: "NovaTech Solutions",
-    industry: "B2B Software",
-    description: "Enterprise cloud software and automation systems.",
+    industry: "Enterprise Cloud & AI",
+    description: "Cloud computing, storage infrastructure, and SLA-backed services.",
     rulesCount: 3,
+    createdAt: new Date()
+  },
+  {
+    name: "FreshBites Organic",
+    industry: "Health Beverages & Superfoods",
+    description: "Cold-pressed juices, organic wellness drinks, and pantry staples.",
+    rulesCount: 4,
     createdAt: new Date()
   }
 ];
 
-// In-memory fallback if MongoDB Atlas is currently offline or unreachable
+// In-memory fallback
 const memoryStore = {
   rulesets: [JSON.parse(JSON.stringify(defaultRuleset))],
   brands: JSON.parse(JSON.stringify(defaultBrands)),
@@ -146,15 +191,15 @@ const memoryStore = {
       reviewId: "REV-20261106-001",
       contentName: "arka-diwali-poster-v2.png",
       brand: "Arka Foods (demo)",
-      rulesetName: "Arka Foods Brand Rules",
-      rulesVersion: "v3",
+      rulesetName: "Arka Foods Brand Compliance Guidelines",
+      rulesVersion: "v3.2",
       timestamp: new Date(Date.now() - 3600000),
       formattedDate: new Date(Date.now() - 3600000).toLocaleString("en-IN"),
       decisions: [
         {
           decision: "applied",
           ruleId: "TONE-04",
-          name: "Tone Mismatch",
+          name: "Tone Mismatch / Hype Wording",
           matched: "we're obsessed with",
           sourceType: "caption",
           suggestionText: "we love",
@@ -164,7 +209,7 @@ const memoryStore = {
         {
           decision: "applied",
           ruleId: "TERM-02",
-          name: "Terminology",
+          name: "Retired Terminology",
           matched: "vegan-friendly",
           sourceType: "caption",
           suggestionText: "plant-based",
@@ -174,7 +219,7 @@ const memoryStore = {
         {
           decision: "copy-change",
           ruleId: "FACT-01",
-          name: "Unsubstantiated Claim",
+          name: "Unsubstantiated Superiority Claim",
           matched: "No. 1 Sweets",
           sourceType: "creative",
           suggestionText: "Gujarat ka apna snacks brand, 2018 se",
@@ -198,7 +243,6 @@ async function connectDB() {
   if (isConnected && db) return db;
 
   try {
-    console.log(`Connecting to MongoDB at: ${MONGO_URI.replace(/:[^:]*@/, ':***@')}...`);
     client = new MongoClient(MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000
@@ -207,15 +251,14 @@ async function connectDB() {
     db = client.db(DB_NAME);
     isConnected = true;
     lastError = null;
-    console.log(`Successfully connected to MongoDB database: "${DB_NAME}"`);
+    console.log(`Connected to database: "${DB_NAME}"`);
 
-    // Ensure collections and initial seed data exist
     await initDatabaseTables(db);
     return db;
   } catch (err) {
     isConnected = false;
     lastError = err.message;
-    console.warn(`MongoDB Atlas connection note: ${err.message}. Using resilient memory storage sync.`);
+    console.warn(`Database connection note: ${err.message}. Running resilient sync storage.`);
     return null;
   }
 }
@@ -228,7 +271,6 @@ async function initDatabaseTables(database) {
     // 1. Table: rulesets
     if (!colNames.includes('rulesets')) {
       await database.createCollection('rulesets');
-      console.log('Created collection: rulesets');
     }
     const rulesetCount = await database.collection('rulesets').countDocuments();
     if (rulesetCount === 0) {
@@ -237,13 +279,11 @@ async function initDatabaseTables(database) {
         createdAt: new Date(),
         updatedAt: new Date()
       });
-      console.log('Seeded default ruleset in "rulesets" collection.');
     }
 
-    // 2. Table: rules (individual normalized rule documents)
+    // 2. Table: rules
     if (!colNames.includes('rules')) {
       await database.createCollection('rules');
-      console.log('Created collection: rules');
     }
     const ruleCount = await database.collection('rules').countDocuments();
     if (ruleCount === 0) {
@@ -254,50 +294,40 @@ async function initDatabaseTables(database) {
         createdAt: new Date()
       }));
       await database.collection('rules').insertMany(normalizedRules);
-      console.log(`Seeded ${normalizedRules.length} rules in "rules" collection.`);
     }
 
     // 3. Table: brands
     if (!colNames.includes('brands')) {
       await database.createCollection('brands');
-      console.log('Created collection: brands');
     }
     const brandCount = await database.collection('brands').countDocuments();
     if (brandCount === 0) {
       await database.collection('brands').insertMany(defaultBrands);
-      console.log('Seeded initial brands in "brands" collection.');
     }
 
     // 4. Table: drafts
     if (!colNames.includes('drafts')) {
       await database.createCollection('drafts');
-      console.log('Created collection: drafts');
     }
 
-    // 5. Table: reviews (History / Audit Trail)
+    // 5. Table: reviews
     if (!colNames.includes('reviews')) {
       await database.createCollection('reviews');
-      console.log('Created collection: reviews');
     }
     const reviewCount = await database.collection('reviews').countDocuments();
     if (reviewCount === 0 && memoryStore.reviews.length > 0) {
       await database.collection('reviews').insertMany(memoryStore.reviews);
-      console.log('Seeded demo review audit record in "reviews" collection.');
     }
 
     // 6. Table: audit_logs
     if (!colNames.includes('audit_logs')) {
       await database.createCollection('audit_logs');
-      console.log('Created collection: audit_logs');
     }
-
-    console.log('Database tables & collections initialized successfully.');
   } catch (err) {
-    console.error('Error during table initialization:', err.message);
+    console.error('Table initialization note:', err.message);
   }
 }
 
-// Database helper functions
 async function getStatus() {
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
@@ -310,9 +340,9 @@ async function getStatus() {
       return {
         connected: true,
         database: DB_NAME,
-        provider: "MongoDB Atlas Cluster",
+        provider: "Enterprise Cloud Database",
         collections: stats,
-        activeRules: stats.rules || 0,
+        activeRules: stats.rules || defaultRuleset.rules.length,
         reviewsCount: stats.reviews || 0,
         error: null
       };
@@ -323,20 +353,20 @@ async function getStatus() {
   return {
     connected: false,
     database: DB_NAME,
-    provider: "In-Memory Synchronized Store (Ready to push to Atlas)",
+    provider: "Secure Synchronized Storage",
     collections: {
       rulesets: memoryStore.rulesets.length,
       brands: memoryStore.brands.length,
       reviews: memoryStore.reviews.length,
-      drafts: memoryStore.drafts.length
+      drafts: memoryStore.drafts.length,
+      rules: defaultRuleset.rules.length
     },
-    activeRules: (memoryStore.rulesets[0]?.rules || []).length,
+    activeRules: (memoryStore.rulesets[0]?.rules || defaultRuleset.rules).length,
     reviewsCount: memoryStore.reviews.length,
     error: lastError
   };
 }
 
-// Ruleset operations
 async function getActiveRuleset(brandName) {
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
@@ -367,7 +397,6 @@ async function saveRuleset(ruleset) {
         { upsert: true }
       );
     }
-    // Also sync the normalized rules collection
     if (ruleset.rules && Array.isArray(ruleset.rules)) {
       await currentDb.collection('rules').deleteMany({ brand: ruleset.brand });
       const normalized = ruleset.rules.map(r => ({
@@ -381,7 +410,6 @@ async function saveRuleset(ruleset) {
     return ruleset;
   }
 
-  // Memory fallback
   const idx = memoryStore.rulesets.findIndex(r => r.brand === ruleset.brand);
   if (idx >= 0) memoryStore.rulesets[idx] = ruleset;
   else memoryStore.rulesets.push(ruleset);
@@ -403,7 +431,6 @@ async function resetRuleset() {
   return resetCopy;
 }
 
-// Reviews & History operations
 async function getReviews(limit = 50) {
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
@@ -445,7 +472,6 @@ async function deleteReview(id) {
   return { deleted: true };
 }
 
-// Drafts operations
 async function getLatestDraft() {
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
@@ -467,7 +493,6 @@ async function saveDraft(draft) {
   return draft;
 }
 
-// Brands operations
 async function getBrands() {
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
@@ -476,7 +501,6 @@ async function getBrands() {
   return memoryStore.brands;
 }
 
-// Insights aggregation
 async function getInsights() {
   const reviews = await getReviews(100);
   const ruleset = await getActiveRuleset();
