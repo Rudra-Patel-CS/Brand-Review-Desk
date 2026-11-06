@@ -1,27 +1,34 @@
 {
   "name": "brand-review-desk",
-  "version": "1.0.0",
-  "description": "Check every piece of content against the approved brand rules before it goes live. Content goes in, it is checked against the loaded guidelines/terms/facts, every issue is explained with the exact rule it breaks, and a human makes the final decision.",
-  "main": "app.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "test": "node server.js --test"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Rudra-Patel-CS/Brand-Review-Desk.git"
-  },
-  "keywords": [],
+  "version": "2.0.0",
+  "description": "Editorial compliance workspace for creative ad audits, OCR claim verification, and brand governance.",
   "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/Rudra-Patel-CS/Brand-Review-Desk/issues"
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server.js",
+    "seed": "node scripts/seed_mongodb.js"
   },
-  "homepage": "https://github.com/Rudra-Patel-CS/Brand-Review-Desk#readme",
   "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^18.0.9",
-    "express": "^5.3.0",
-    "mongodb": "^7.8.0"
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lucide-react": "^0.475.0",
+    "mongodb": "^6.13.0",
+    "motion": "^12.4.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "autoprefixer": "^10.4.20",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3"
   }
 }
