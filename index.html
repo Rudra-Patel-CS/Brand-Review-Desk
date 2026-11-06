@@ -3,25 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brand Review Desk - Team 24CS073</title>
+<title>Brand Review Desk - AI-Powered Brand Compliance</title>
 <link rel="stylesheet" href="styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="app">
-  <div class="rail">
-    <div class="brand"><div class="bmark">BR</div><div class="bname">Brand Review<br>Desk</div></div>
-    <div class="nav">
-      <button class="ni active" data-view="review"><span class="ic">&#10022;</span>Review Content</button>
-      <button class="ni" data-view="rules"><span class="ic">&#9708;</span>Brand Rules</button>
-      <button class="ni" data-view="history"><span class="ic">&#9719;</span>History</button>
-      <button class="ni" data-view="insights"><span class="ic">&#9684;</span>Insights</button>
+  <aside class="rail">
+    <div class="brand">
+      <div class="bmark">BR</div>
+      <div>
+        <div class="bname">Brand Review<br>Desk</div>
+        <div class="bver">v2.0 &middot; MongoDB Edition</div>
+      </div>
     </div>
-    <div class="railfoot">Team 24CS073 &middot; CodeNexus India 2026<br>Rule-based checks &middot; human decides</div>
-  </div>
-  <div class="main" id="main"></div>
+
+    <!-- Active Brand Switcher -->
+    <div class="brandselect-wrap">
+      <label class="bselect-label">ACTIVE BRAND</label>
+      <select id="brandSelect" class="brandselect">
+        <option value="Arka Foods (demo)">Arka Foods (demo)</option>
+        <option value="NovaTech Solutions">NovaTech Solutions</option>
+      </select>
+    </div>
+
+    <nav class="nav">
+      <button class="ni active" data-view="review"><span class="ic">&#10022;</span>Review Content</button>
+      <button class="ni" data-view="rules"><span class="ic">&#9708;</span>Brand Rules <span class="navbadge" id="ruleCountBadge">5</span></button>
+      <button class="ni" data-view="history"><span class="ic">&#9719;</span>History <span class="navbadge" id="historyCountBadge">1</span></button>
+      <button class="ni" data-view="insights"><span class="ic">&#9684;</span>Insights &amp; Analytics</button>
+    </nav>
+
+    <!-- MongoDB Database Status Card -->
+    <div class="dbstatus-box" id="dbStatusBox" role="button" tabindex="0" title="Click to view database cluster and tables">
+      <div class="dbdot-wrap">
+        <span class="dbdot" id="dbDot"></span>
+      </div>
+      <div class="dbinfo">
+        <div class="dblabel" id="dbLabel">MongoDB Atlas</div>
+        <div class="dbcollection" id="dbCollection">Brand_Review_Desk</div>
+      </div>
+      <div class="dbarrow">&#9656;</div>
+    </div>
+
+    <div class="railfoot">
+      <b>Brand Review Desk</b><br>
+      Automated Rule Checks &bull; MongoDB Cluster &bull; Human Final Decision
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
 </div>
+
 <div class="toast" id="toast"></div>
 <div id="modalroot"></div>
+
 <script src="vendor/tesseract.min.js"></script>
 <script src="data/default-rules.js"></script>
 <script src="engine.js"></script>

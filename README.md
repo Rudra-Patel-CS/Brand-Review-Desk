@@ -1,68 +1,84 @@
-# Brand Review Desk - Team 24CS073 (CodeNexus India 2026, Round 2)
+# Brand Review Desk (MongoDB Edition) - Team 24CS073
 
-Check every piece of content against the approved brand rules before it goes live.
-Content goes in, it is checked against the loaded guidelines/terms/facts, every issue
-is explained with the exact rule it breaks, and a human makes the final decision.
+Check every piece of content against approved brand rules before it goes live.
+Content goes in, it is verified against brand guidelines, terminology, and approved facts, every issue is cited with the exact source rule it breaks, and a human reviewer makes the final decision.
+
+---
+
+## What's New in this Version
+
+- **MongoDB Database Integration**:
+  - Replaces manual JSON import/export with direct MongoDB Atlas storage.
+  - Connected to MongoDB cluster `project-1.xzfwn9j.mongodb.net`, database `Brand_Review_Desk`.
+  - Collections ("tables") created and managed:
+    - `rulesets`: Stores comprehensive brand rulebooks and approved facts.
+    - `rules`: Normalized rule documents with pattern indexing and toggling.
+    - `reviews`: Immutable compliance audit trail for every signed-off campaign.
+    - `drafts`: Active and saved content drafts (posters, captions, OCR tokens).
+    - `brands`: Multi-brand profiles and brand-specific rule sets.
+    - `audit_logs`: Granular change log of reviewer actions.
+  - Offline-first resilience: seamless fallback store if the network is disconnected, with automatic re-syncing.
+- **Brand Selector**: Switch dynamically between brand profiles and their dedicated rulebooks (e.g., *Arka Foods*, *NovaTech Solutions*).
+- **Interactive Rule Tester**: Real-time pattern tester inside the rule editor modal to test regex and phrase matching against sample copy before saving.
+- **Real-Time Compliance Analytics & Insights**: Live dashboard aggregating total reviews, compliance rate, top flagged rules, and category distributions directly from MongoDB.
+- **Review Filters**: Filter issues by Severity (High, Medium, Low), Status (Open, Resolved), or Source (Caption vs Creative).
+- **Interactive Bounding Box Spotlight**: Click any detected issue or poster outline to highlight the exact phrase and its rule card.
+- **Multiple Demo Draft Presets**: Quick-switch between Festive Poster, Health Claim Social Ad, and Flash Sale Offer.
+
+---
 
 ## Run it
 
-No build step, no install. Two ways:
+### Option 1: Full-Stack with Express & MongoDB (Recommended)
 
-1. **Serve the folder (recommended, enables the on-device creative scan).**
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+2. **Start the server**:
+   ```bash
+   npm start
+   ```
+3. Open **`http://localhost:3000`** in your browser.
 
-   **Windows - easiest (VS Code):**
-   - Right-click the ZIP -> Extract All.
-   - Open the extracted `brand-review-desk` folder in VS Code.
-   - Install the free "Live Server" extension (by Ritwick Dey).
-   - Right-click `index.html` -> "Open with Live Server". Done.
+The server connects to MongoDB Atlas using the configured `.env` URI, exposes REST endpoints at `/api/...`, and serves the frontend application.
 
-   **Windows - Python:**
-   - Install Python from python.org (tick "Add python.exe to PATH" during setup).
-   - Right-click the ZIP -> Extract All, then open the extracted `brand-review-desk` folder.
-   - In the folder address bar type `powershell` and press Enter.
-   - Run: `py -m http.server 8000`  (if `py` is missing, use `python -m http.server 8000`)
-   - Open http://localhost:8000 in the browser. Keep the window open while using the app.
+### Option 2: Static Server / Live Server
 
-   **Mac/Linux:** `cd brand-review-desk && python3 -m http.server 8000`, then open http://localhost:8000.
+You can also run any local HTTP server:
+- In VS Code: Right-click `index.html` -> "Open with Live Server".
+- Python: `python -m http.server 8000` -> open `http://localhost:8000`.
 
-   Any static server works (npx serve, nginx, GitHub Pages, Netlify...).
+---
 
-2. **Just open index.html** - caption/text checks, rules editing, history and export all work.
-   The creative (poster) text scan needs a web origin because browsers block Web Workers on
-   file:// pages; in that case the app says so plainly and sends the creative to manual review.
-   Nothing is ever auto-passed.
+## Database Architecture
 
-Everything runs locally. No account, no API key, no network needed after download
-(the OCR engine is vendored in /vendor). Uploaded images never leave the device.
+| Collection | Purpose | Schema Key Fields |
+| :--- | :--- | :--- |
+| **`rulesets`** | Complete brand rulebooks | `brand`, `rulesetName`, `version`, `rules[]`, `approvedFacts[]` |
+| **`rules`** | Individual indexed rules | `id`, `name`, `category`, `severity`, `patterns[]`, `regex`, `why`, `suggestion`, `source`, `enabled` |
+| **`reviews`** | Audit trail of approved content | `reviewId`, `contentName`, `brand`, `decisions[]`, `copyChanges[]`, `finalCaption`, `timestamp`, `status` |
+| **`drafts`** | Content drafts & OCR text | `name`, `kind`, `imageUrl`, `caption`, `brand`, `ocr`, `updatedAt` |
+| **`brands`** | Brand profiles | `name`, `industry`, `description`, `rulesCount`, `createdAt` |
+| **`audit_logs`** | Granular event audit logs | `event`, `targetId`, `timestamp`, `details` |
 
-## What is real
+---
 
-- **Rule engine** (`engine.js`): the loaded ruleset is the only thing that fires flags.
-  Edit rules on the Brand Rules page, import your own JSON, and the checks respond.
-  Every flag carries the rule ID, the exact matched text and the rule's source quote/version.
-- **Creative text scan**: Tesseract.js OCR runs in the browser (sparse-text mode, 2x upscale),
-  returns word-level bounding boxes, and the red dashed outline on the creative is drawn
-  from the actual OCR result - not a fixed overlay.
-- **Linked caption**: checked as text; matched phrases are highlighted in place and fixes
-  apply directly to the caption.
-- **Human decision flow**: apply a suggestion, queue a creative copy change (the app never
-  edits poster pixels - approved wording is handed to design in the export report), or
-  dismiss with a logged reason. Approve & Export downloads a review report (txt + json)
-  and writes the audit record to History.
-- **Persistence**: rules, draft and history are stored in localStorage on the device.
+## File Structure
 
-## Honest limits (by design, stated in the UI too)
+- `server.js` - Express backend server with MongoDB REST API routes
+- `db.js` - MongoDB Atlas driver connector, collection initializers & seeding
+- `index.html` - App shell, brand switcher, and database status card
+- `styles.css` - Modern styling, typography, responsive layout, animations
+- `app.js` - Frontend controller, live API sync, filter engine, modal handlers
+- `engine.js` - Rule check engine, pattern matching, OCR bounding box mapping
+- `vendor/` - Vendored Tesseract.js runtime (MIT), 100% offline OCR
+- `data/` - Default demo ruleset and facts
+- `assets/` - Demo posters and brand assets
 
-- Checked: caption text and text detected on the creative, against the loaded rules
-  (claims, tone, terminology - whatever rules you load).
-- Not auto-checked: colours, layout, logo placement and other purely visual rules.
-  Those go to manual review. OCR on heavily stylized type can be imperfect; low-confidence
-  scans are labeled as hints, not verdicts.
+---
 
-## Files
+## Honest Scope & Limits
 
-- `index.html`, `styles.css`, `app.js` - the app (plain JS, commented, editable)
-- `engine.js` - the check engine (pure logic; also runs in Node for tests)
-- `data/default-rules.json` / `.js` - the demo Arka Foods ruleset (fictional demo brand)
-- `assets/arka-poster.png` - fictional demo creative
-- `vendor/` - Tesseract.js runtime (MIT), fully offline
+- **Automated**: Text checks on captions and poster OCR text (claims, tone, terminology, pricing disclosures).
+- **Human Decision**: Visual rules (layout, colors, typography) require visual review; poster pixels are not altered automatically. Approved copy changes are handed to the design team in the exported report.

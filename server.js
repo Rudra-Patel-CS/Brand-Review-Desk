@@ -147,16 +147,21 @@ app.get('/api/insights', async (req, res) => {
 });
 
 // Fallback to index.html for client-side navigation
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Start the server
-async function start() {
-  console.log('Connecting to database...');
-  await db.connectDB();
+// Start the server immediately so web UI & APIs are instantly responsive
+function start() {
   app.listen(PORT, () => {
     console.log(`Brand Review Desk server listening on http://localhost:${PORT}`);
+  });
+  // Connect to database in background
+  console.log('Connecting to database...');
+  db.connectDB().then(() => {
+    console.log('Database connection initialized.');
+  }).catch((err) => {
+    console.warn('Initial database connection notice:', err.message);
   });
 }
 
