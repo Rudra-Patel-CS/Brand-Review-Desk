@@ -2,13 +2,29 @@
    Manages collections for rulesets, rules, drafts, reviews, brands, and audit logs.
 */
 
-const dns = require('node:dns');
-try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
-
-const { MongoClient, ObjectId } = require('mongodb');
 require('dotenv').config();
 
-const MONGO_URI = process.env.MONGO_URI;
+const dns = require('node:dns');
+const fs = require('node:fs');
+const net = require('node:net');
+// Resolver override for networks where the system DNS cannot resolve MongoDB SRV
+// records. Set DNS_SERVERS="8.8.8.8,1.1.1.1" in .env to customise.
+const DNS_SERVERS = (process.env.DNS_SERVERS || '8.8.8.8,1.1.1.1')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Public resolvers first, then the resolvers this machine actually uses.
+// Some networks block direct public DNS but answer through their own resolver.
+const SYSTEM_DNS_SERVERS = discoverSystemDnsServers();
+try {
+  dns.setServers([...new Set([...DNS_SERVERS, ...SYSTEM_DNS_SERVERS])]);
+} catch (e) {}
+
+const { MongoClient, ObjectId } = require('mongodb');
+const demoCatalog = require('./data/demo-catalog.json');
+
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://db_test:password%402177@project-1.xzfwn9j.mongodb.net/Brand_Review_Desk?retryWrites=true&w=majority&appName=project-1";
 const DB_NAME = process.env.DB_NAME || "Brand_Review_Desk";
 
 let client = null;
@@ -23,7 +39,6 @@ const defaultRuleset = {
   version: "v3.2",
   note: "Official brand compliance ruleset governing advertising claims, tone of voice, terminology, and legal requirements.",
   isDefault: true,
-  isDemo: true,
   approvedFacts: [
     {
       id: "FACT-04",
@@ -179,26 +194,15 @@ const defaultBrands = [
     description: "Cold-pressed juices, organic wellness drinks, and pantry staples.",
     rulesCount: 4,
     createdAt: new Date()
-  }
+  },
+  ...demoCatalog.brands.map((brand) => ({
+    ...brand,
+    rulesCount: demoCatalog.rules.filter((rule) => rule.brand === brand.id).length,
+    createdAt: new Date()
+  }))
 ];
 
 // In-memory fallback
-
-// ---------- USER COLLECTION ----------
-async function createUser(username, passwordHash) {
-  const usersColl = db.collection('users');
-  return await usersColl.insertOne({ username, passwordHash });
-}
-async function findUser(username) {
-  const usersColl = db.collection('users');
-  return await usersColl.findOne({ username });
-}
-
-// Export user helpers
-module.exports.createUser = createUser;
-module.exports.findUser = findUser;
-
-// Existing in-memory fallback continues below
 const memoryStore = {
   rulesets: [JSON.parse(JSON.stringify(defaultRuleset))],
   brands: JSON.parse(JSON.stringify(defaultBrands)),
@@ -256,29 +260,95 @@ const memoryStore = {
   audit_logs: []
 };
 
+function isDnsLookupError(err) {
+  const msg = `${err?.message || ''} ${err?.code || ''}`.toLowerCase();
+  return /querysrv|etimedout|enotfound|econnrefused|dns/.test(msg);
+}
+
+// Best-effort discovery of the operating system's DNS resolvers. Some networks
+// (VPNs, corporate DNS, sandboxes) cannot reach public resolvers for the Atlas
+// SRV lookup, so we retry with whatever the OS is actually using.
+function discoverSystemDnsServers() {
+  const found = [];
+  try {
+    if (process.platform === 'win32') {
+      const { execFileSync } = require('node:child_process');
+      const out = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | ForEach-Object { $_.ServerAddresses }) -join ','"
+        ],
+        { encoding: 'utf8', timeout: 4000, windowsHide: true }
+      );
+      found.push(...String(out).split(','));
+    } else {
+      const conf = fs.readFileSync('/etc/resolv.conf', 'utf8');
+      for (const line of conf.split(/\r?\n/)) {
+        const match = line.match(/^\s*nameserver\s+(\S+)/i);
+        if (match) found.push(match[1]);
+      }
+    }
+  } catch {
+    // Discovery is optional; fall through with whatever we already have.
+  }
+
+  return [...new Set(found.map((s) => s.trim()).filter((s) => net.isIPv4(s)))];
+}
+
+async function openConnection() {
+  client = new MongoClient(MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000
+  });
+  await client.connect();
+  db = client.db(DB_NAME);
+}
+
+function connectionFailed(err) {
+  isConnected = false;
+  lastError = err.message;
+  console.warn(`Database connection note: ${err.message}. Running resilient sync storage.`);
+  return null;
+}
+
 async function connectDB() {
   if (isConnected && db) return db;
 
   try {
-    if (!MONGO_URI) throw new Error('MONGO_URI is not configured');
-    client = new MongoClient(MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 5000
-    });
-    await client.connect();
-    db = client.db(DB_NAME);
-    isConnected = true;
-    lastError = null;
-    console.log(`Connected to database: "${DB_NAME}"`);
+    await openConnection();
+  } catch (firstErr) {
+    if (!isDnsLookupError(firstErr)) {
+      return connectionFailed(firstErr);
+    }
 
-    await initDatabaseTables(db);
-    return db;
-  } catch (err) {
-    isConnected = false;
-    lastError = err.message;
-    console.warn(`Database connection note: ${err.message}. Running resilient sync storage.`);
-    return null;
+    const discovered = discoverSystemDnsServers();
+    if (!discovered.length) {
+      return connectionFailed(firstErr);
+    }
+
+    try {
+      dns.setServers([...new Set([...dns.getServers(), ...discovered])]);
+      if (client) {
+        try { await client.close(); } catch { /* ignore */ }
+      }
+      console.warn(
+        `Database SRV lookup failed; retrying with system DNS: ${discovered.join(', ')}`
+      );
+      await openConnection();
+    } catch (retryErr) {
+      return connectionFailed(retryErr);
+    }
   }
+
+  isConnected = true;
+  lastError = null;
+  console.log(`Connected to database: "${DB_NAME}"`);
+
+  await initDatabaseTables(db);
+  return db;
 }
 
 async function initDatabaseTables(database) {
@@ -311,7 +381,7 @@ async function initDatabaseTables(database) {
         rulesetName: defaultRuleset.rulesetName,
         createdAt: new Date()
       }));
-      await database.collection('rules').insertMany(normalizedRules.map(rule => ({ ...rule, isDemo: true })));
+      await database.collection('rules').insertMany(normalizedRules);
     }
 
     // 3. Table: brands
@@ -320,7 +390,7 @@ async function initDatabaseTables(database) {
     }
     const brandCount = await database.collection('brands').countDocuments();
     if (brandCount === 0) {
-      await database.collection('brands').insertMany(defaultBrands.map(brand => ({ ...brand, isDemo: true })));
+      await database.collection('brands').insertMany(defaultBrands);
     }
 
     // 4. Table: drafts
@@ -334,15 +404,130 @@ async function initDatabaseTables(database) {
     }
     const reviewCount = await database.collection('reviews').countDocuments();
     if (reviewCount === 0 && memoryStore.reviews.length > 0) {
-      await database.collection('reviews').insertMany(memoryStore.reviews.map(review => ({ ...review, isDemo: true })));
+      await database.collection('reviews').insertMany(memoryStore.reviews);
     }
 
     // 6. Table: audit_logs
     if (!colNames.includes('audit_logs')) {
       await database.createCollection('audit_logs');
     }
+
+    // 7. Table: users (portal accounts)
+    if (!colNames.includes('users')) {
+      await database.createCollection('users');
+    }
+    await ensureUserIndexes(database);
+
+    // 8. Table: campaigns
+    if (!colNames.includes('campaigns')) {
+      await database.createCollection('campaigns');
+    }
+
+    // 9. Idempotently add the extended 10-brand demo catalog.
+    await ensureDemoCatalog(database);
   } catch (err) {
     console.error('Table initialization note:', err.message);
+  }
+}
+
+// Adds the 10 extra demo brands, their rules, campaigns, and per-brand rulesets
+// without deleting anything. Safe to run on every startup.
+async function ensureDemoCatalog(database) {
+  try {
+    for (const brand of demoCatalog.brands) {
+      await database.collection('brands').updateOne(
+        { id: brand.id },
+        {
+          $set: {
+            ...brand,
+            rulesCount: demoCatalog.rules.filter((r) => r.brand === brand.id).length,
+            updatedAt: new Date()
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    }
+
+    for (const rule of demoCatalog.rules) {
+      await database.collection('rules').updateOne(
+        { id: rule.id },
+        {
+          $set: { ...rule, updatedAt: new Date() },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    }
+
+    for (const campaign of demoCatalog.campaigns) {
+      await database.collection('campaigns').updateOne(
+        { id: campaign.id },
+        {
+          $set: { ...campaign, updatedAt: new Date() },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    }
+
+    for (const brand of demoCatalog.brands) {
+      const brandRules = demoCatalog.rules.filter((r) => r.brand === brand.id);
+      await database.collection('rulesets').updateOne(
+        { brand: brand.name },
+        {
+          $set: {
+            brand: brand.name,
+            rulesetName: brand.rulebookVersion,
+            version: brand.rulebookVersion,
+            note: brand.description,
+            isDefault: false,
+            rules: brandRules.map((rule) => ({
+              ...rule,
+              name: rule.title,
+              why: rule.explanation,
+              suggestion: {
+                kind: 'replace',
+                text: rule.suggestedRemedy,
+                note: 'Approved remedy'
+              },
+              source: {
+                doc: rule.source,
+                version: 'v1',
+                quote: rule.explanation
+              }
+            })),
+            updatedAt: new Date()
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    }
+
+    console.log(
+      `Demo catalog ready: ${demoCatalog.brands.length} extra brands, ` +
+      `${demoCatalog.rules.length} rules, ${demoCatalog.campaigns.length} campaigns.`
+    );
+  } catch (err) {
+    console.warn('Demo catalog seed note:', err.message);
+  }
+}
+
+async function ensureUserIndexes(database) {
+  try {
+    // Case-insensitive uniqueness for usernames and emails.
+    await database.collection('users').createIndex(
+      { usernameLower: 1 },
+      { unique: true, name: 'uniq_username_lower' }
+    );
+    await database.collection('users').createIndex(
+      { emailLower: 1 },
+      { unique: true, name: 'uniq_email_lower' }
+    );
+  } catch (err) {
+    // Index creation can fail if legacy duplicates exist. Do not block startup.
+    console.warn('User index note:', err.message);
   }
 }
 
@@ -519,231 +704,6 @@ async function getBrands() {
   return memoryStore.brands;
 }
 
-function normalizeBrand(record) {
-  const { _id, ...plainRecord } = record;
-  const name = record.name || record.brandName || record.brand || 'Unknown brand';
-  const rawId = String(record.id || record.brandId || name)
-    .toLowerCase()
-    .replace(/\s*\(demo\)/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  const normalizedId = rawId.includes('freshbites') ? 'freshbites'
-    : rawId.includes('arka') ? 'arka'
-      : rawId.includes('novatech') ? 'novatech'
-        : rawId;
-  return {
-    ...plainRecord,
-    id: normalizedId,
-    name,
-    category: record.category || record.industry || '',
-    rulebookVersion: record.rulebookVersion || record.rulesetName || 'Unversioned',
-    activeRulesCount: record.activeRulesCount || record.rulesCount || 0,
-    approvedClaimsCount: record.approvedClaimsCount || 0,
-    isDemo: Boolean(
-      record.isDemo ||
-      name.includes('(demo)') ||
-      record.approvedClaimsCount > 0 ||
-      /Master Rulebook v4\.1|Quality Codex v2\.8|Commercial Compliance v3\.0/.test(record.rulebookVersion || '') ||
-      (name === 'FreshBites Organic' && record.industry === 'Health Beverages & Superfoods') ||
-      (name === 'NovaTech Solutions' && record.industry === 'Enterprise Cloud & AI')
-    )
-  };
-}
-
-const sampleRuleIds = new Set(['FB-012', 'FB-004', 'FB-028', 'FB-019', 'FB-031', 'AF-001', 'AF-014', 'AF-022', 'NT-001', 'NT-008', 'NT-015', 'FACT-01', 'TONE-04', 'TERM-02', 'LEGAL-01', 'LEGAL-02', 'PRICE-01', 'TECH-01', 'COMP-01', 'HEALTH-01']);
-
-function normalizeWorkspaceRule(record) {
-  const { _id, ...plainRecord } = record;
-  const escapePattern = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = record.pattern || (Array.isArray(record.patterns)
-    ? record.patterns.map(value => record.regex ? String(value) : escapePattern(value)).join('|')
-    : '');
-  const source = typeof record.source === 'string'
-    ? record.source
-    : record.source?.doc || record.source?.quote || '';
-  const rawSeverity = String(record.severity || 'advisory').toLowerCase();
-  const severity = ['critical', 'high'].includes(rawSeverity) ? 'critical'
-    : ['warning', 'medium', 'moderate'].includes(rawSeverity) ? 'warning'
-      : 'advisory';
-  const rawCategory = String(record.category || '').toLowerCase();
-  const category = /health|claim|nutrition/.test(rawCategory) ? 'health'
-    : /trademark|brand|logo/.test(rawCategory) ? 'trademark'
-      : /disclaimer|legal|allergen|sla/.test(rawCategory) ? 'disclaimers'
-        : /pricing|offer|promo|competitive/.test(rawCategory) ? 'pricing'
-          : 'general';
-  return {
-    ...plainRecord,
-    id: String(record.id || record.ruleId || ''),
-    brand: normalizeBrand({ name: record.brand || record.brandId || 'global' }).id,
-    title: record.title || record.name || 'Untitled rule',
-    category,
-    severity,
-    pattern,
-    flags: record.flags || (record.regex ? 'i' : ''),
-    source,
-    explanation: record.explanation || record.why || '',
-    suggestedRemedy: record.suggestedRemedy || record.suggestion?.text || record.suggestion || undefined,
-    enabled: record.enabled !== false,
-    appliesTo: record.appliesTo || (record.sourceType === 'caption' ? ['caption'] : record.sourceType === 'creative' ? ['ocr'] : ['caption', 'ocr']),
-    isDemo: Boolean(record.isDemo || String(record.brand || '').includes('(demo)') || sampleRuleIds.has(String(record.id || record.ruleId || '')))
-  };
-}
-
-function normalizeWorkspaceCampaign(record) {
-  const { _id, ...plainRecord } = record;
-  const imageUrl = String(record.imageUrl || record.image || '');
-  return {
-    ...plainRecord,
-    id: String(record.id || record.campaignId || record._id || ''),
-    code: record.code || record.campaignCode || String(record.id || 'REFERENCE'),
-    title: record.title || record.name || record.contentName || 'Untitled campaign',
-    brandId: normalizeBrand({ name: record.brandId || record.brandName || record.brand || 'global' }).id,
-    brandName: record.brandName || record.brand || 'Unassigned',
-    channel: record.channel || 'Unspecified',
-    format: record.format || 'Image',
-    aspectRatio: record.aspectRatio || '4/3',
-    imageUrl: imageUrl.replace(/^\/assets\/screen_/, '/assets/aistudio/screen_'),
-    caption: record.caption || '',
-    ocrText: record.ocrText || '',
-    ocrConfidence: Number(record.ocrConfidence || 0),
-    initialFindings: Array.isArray(record.initialFindings) ? record.initialFindings : [],
-    status: record.status || 'action_required',
-    sourceName: record.sourceName || '',
-    sourceUrl: record.sourceUrl || '',
-    licenseName: record.licenseName || '',
-    licenseUrl: record.licenseUrl || '',
-    attribution: record.attribution || '',
-    sourceDescription: record.sourceDescription || '',
-    isDemo: Boolean(record.isDemo || String(record.id || '').startsWith('preset-')),
-    referenceOnly: Boolean(record.referenceOnly),
-    updatedAt: record.updatedAt || record.createdAt || null
-  };
-}
-
-function normalizeWorkspaceReview(record) {
-  const { _id, ...plainRecord } = record;
-  if (!record.campaignTitle && record.contentName) {
-    return {
-      ...plainRecord,
-      id: String(record.reviewId || record._id),
-      dossierNumber: String(record.reviewId || record._id),
-      campaignTitle: record.contentName,
-      brandId: normalizeBrand({ name: record.brand || 'global' }).id,
-      brandName: record.brand || 'Unassigned',
-      channel: record.channel || 'Unspecified',
-      reviewedAt: record.formattedDate || record.timestamp || '',
-      reviewerName: record.reviewerName || 'Unassigned reviewer',
-      reviewerRole: record.reviewerRole || '',
-      auditId: record.auditId || '',
-      sha256Hash: '',
-      status: record.status || 'approved',
-      findingsCount: record.findingsCount || record.decisionsCount || 0,
-      clearedCount: record.clearedCount || record.appliedCount || 0,
-      openCount: record.openCount || 0,
-      imageUrl: record.imageUrl || '',
-      findings: record.findings || [],
-      isDemo: Boolean(record.isDemo || record.reviewId === 'REV-20261106-001' || String(record.contentName || '').includes('diwali-poster-v2'))
-    };
-  }
-  return {
-    ...plainRecord,
-    id: String(record.id || record._id || ''),
-    dossierNumber: record.dossierNumber || record.reviewId || String(record.id || record._id || ''),
-    campaignTitle: record.campaignTitle || record.contentName || 'Untitled review',
-    brandId: normalizeBrand({ name: record.brandId || record.brandName || record.brand || 'global' }).id,
-    brandName: record.brandName || record.brand || 'Unassigned',
-    channel: record.channel || 'Unspecified',
-    reviewedAt: record.reviewedAt || record.formattedDate || record.timestamp || '',
-    imageUrl: String(record.imageUrl || ''),
-    reviewerName: record.reviewerName || 'Reviewer not recorded',
-    reviewerRole: record.reviewerRole || '',
-    sha256Hash: record.sha256Hash || '',
-    auditId: record.auditId || '',
-    findings: Array.isArray(record.findings) ? record.findings : [],
-    findingsCount: Number(record.findingsCount || record.decisionsCount || 0),
-    clearedCount: Number(record.clearedCount || record.appliedCount || 0),
-    openCount: Number(record.openCount || 0),
-    status: record.status || 'conditional',
-    isDemo: Boolean(record.isDemo || String(record.id || '').startsWith('rev-2026-'))
-  };
-}
-
-async function getWorkspaceSnapshot() {
-  const database = await connectDB();
-  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
-  const [brandRows, ruleRows, campaignRows, reviewRows] = await Promise.all([
-    database.collection('brands').find({}).toArray(),
-    database.collection('rules').find({}).toArray(),
-    database.collection('campaigns').find({}).sort({ updatedAt: -1, createdAt: -1 }).toArray(),
-    database.collection('reviews').find({}).sort({ timestamp: -1, createdAt: -1 }).limit(500).toArray()
-  ]);
-  const brands = brandRows.map(normalizeBrand);
-  const rules = ruleRows.map(normalizeWorkspaceRule).filter(rule => rule.id && rule.pattern);
-  const campaigns = campaignRows.map(normalizeWorkspaceCampaign);
-  const reviews = reviewRows.map(normalizeWorkspaceReview);
-  return {
-    connected: true,
-    database: DB_NAME,
-    updatedAt: new Date().toISOString(),
-    brands,
-    rules,
-    campaigns,
-    reviews
-  };
-}
-
-async function saveWorkspaceRule(rule) {
-  const database = await connectDB();
-  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
-  const { _id, createdAt, ...ruleFields } = rule;
-  const value = { ...ruleFields, updatedAt: new Date() };
-  const storedBrandNames = {
-    freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
-    arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
-    novatech: ['novatech', 'NovaTech Solutions'],
-    global: ['global']
-  }[rule.brand] || [rule.brand];
-  await database.collection('rules').updateOne(
-    { id: String(rule.id), brand: { $in: storedBrandNames } },
-    { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
-    { upsert: true }
-  );
-  return database.collection('rules').findOne({ id: String(rule.id), brand: rule.brand });
-}
-
-async function deleteWorkspaceRule(id, brand) {
-  const database = await connectDB();
-  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
-  const storedBrandNames = {
-    freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
-    arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
-    novatech: ['novatech', 'NovaTech Solutions'],
-    global: ['global']
-  }[brand] || [brand];
-  return database.collection('rules').deleteOne({ id: String(id), brand: { $in: storedBrandNames } });
-}
-
-async function saveWorkspaceCampaign(campaign) {
-  const database = await connectDB();
-  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
-  const { _id, createdAt, ...campaignFields } = campaign;
-  const value = { ...campaignFields, updatedAt: new Date() };
-  await database.collection('campaigns').updateOne(
-    { id: String(campaign.id) },
-    { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
-    { upsert: true }
-  );
-  return database.collection('campaigns').findOne({ id: String(campaign.id) });
-}
-
-async function addWorkspaceReview(review) {
-  const database = await connectDB();
-  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
-  const value = { ...review, id: String(review.id || `review-${Date.now()}`), timestamp: new Date(), createdAt: new Date() };
-  await database.collection('reviews').insertOne(value);
-  return value;
-}
-
 async function getInsights() {
   const reviews = await getReviews(100);
   const ruleset = await getActiveRuleset();
@@ -790,6 +750,112 @@ async function getInsights() {
   };
 }
 
+// ── User management ──────────────────────────────────────────────────────────
+async function requireDatabase() {
+  const database = await connectDB();
+  if (!database || !isConnected) {
+    const err = new Error(
+      'Account storage is unavailable. Could not connect to MongoDB Atlas.'
+    );
+    err.code = 'DB_UNAVAILABLE';
+    throw err;
+  }
+  return database;
+}
+
+async function createUser({ username, email, passwordHash }) {
+  const database = await requireDatabase();
+  const cleanUsername = String(username).trim();
+  const cleanEmail = String(email || '').trim();
+  const usernameLower = cleanUsername.toLowerCase();
+  const emailLower = cleanEmail.toLowerCase();
+
+  const existing = await database.collection('users').findOne({
+    $or: [
+      { usernameLower },
+      { emailLower },
+      // Legacy documents created before the normalised fields existed.
+      { username: cleanUsername },
+      { email: cleanEmail }
+    ]
+  });
+
+  if (existing) {
+    const err = new Error(
+      existing.usernameLower === usernameLower
+        ? 'That username is already taken.'
+        : 'An account with that email already exists.'
+    );
+    err.code = 'USER_EXISTS';
+    throw err;
+  }
+
+  const doc = {
+    username: cleanUsername,
+    usernameLower,
+    email: cleanEmail,
+    emailLower,
+    passwordHash,
+    role: 'user',
+    createdAt: new Date()
+  };
+
+  try {
+    const result = await database.collection('users').insertOne(doc);
+    return { ...doc, _id: result.insertedId };
+  } catch (err) {
+    if (err && err.code === 11000) {
+      const conflict = new Error(
+        'That username or email is already registered.'
+      );
+      conflict.code = 'USER_EXISTS';
+      throw conflict;
+    }
+    throw err;
+  }
+}
+
+// Finds a user by username OR email (case-insensitive).
+async function findUser(identifier) {
+  const database = await requireDatabase();
+  const raw = String(identifier || '').trim();
+  if (!raw) return null;
+  const key = raw.toLowerCase();
+
+  const user = await database.collection('users').findOne({
+    $or: [{ usernameLower: key }, { emailLower: key }]
+  });
+  if (user) return user;
+
+  // Legacy documents without normalised fields.
+  return database.collection('users').findOne({
+    $or: [{ username: raw }, { email: raw }]
+  });
+}
+
+async function findUserById(id) {
+  const database = await requireDatabase();
+  try {
+    const { ObjectId } = require('mongodb');
+    return await database.collection('users').findOne({ _id: new ObjectId(id) });
+  } catch {
+    return null;
+  }
+}
+
+async function countUsers() {
+  const database = await requireDatabase();
+  return database.collection('users').countDocuments();
+}
+
+async function listUsers() {
+  const database = await requireDatabase();
+  return database
+    .collection('users')
+    .find({}, { projection: { passwordHash: 0 } })
+    .toArray();
+}
+
 module.exports = {
   connectDB,
   getStatus,
@@ -802,11 +868,12 @@ module.exports = {
   getLatestDraft,
   saveDraft,
   getBrands,
-  getWorkspaceSnapshot,
-  saveWorkspaceRule,
-  deleteWorkspaceRule,
-  saveWorkspaceCampaign,
-  addWorkspaceReview,
   getInsights,
-  defaultRuleset
+  defaultRuleset,
+  createUser,
+  findUser,
+  findUserById,
+  countUsers,
+  listUsers
 };
+

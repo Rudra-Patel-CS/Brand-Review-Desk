@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1500" viewBox="0 0 1200 1500" role="img" aria-label="TERRATRAIL LOW-IMPACT TRAVEL">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2c2416"/>
+      <stop offset="100%" stop-color="#5a5b36"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#d8c78f" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#d8c78f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="1500" fill="url(#bg)"/>
+  <circle cx="983.9999999999999" cy="270" r="380" fill="url(#glow)"/>
+  <circle cx="144" cy="1380" r="300" fill="#d8c78f" opacity="0.08"/>
+  <circle cx="1080" cy="1170" r="220" fill="none" stroke="#d8c78f" stroke-opacity="0.22" stroke-width="2"/>
+  <circle cx="1080" cy="1170" r="160" fill="none" stroke="#d8c78f" stroke-opacity="0.14" stroke-width="2"/>
+
+  <text x="96" y="150" font-family="Georgia, 'Times New Roman', serif" font-size="62" font-weight="700" fill="#ffffff" letter-spacing="2">TERRATRAIL</text>
+  <text x="96" y="190" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#d8c78f" letter-spacing="6">EXPEDITIONS</text>
+  <line x1="96" y1="251" x2="556" y2="251" stroke="#d8c78f" stroke-opacity="0.5" stroke-width="2"/>
+  <text x="96" y="287" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#ffffff" fill-opacity="0.72" letter-spacing="4">LOW-IMPACT TRAVEL</text>
+
+  <text x="96" y="610" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">100% CARBON</text>
+    <text x="96" y="708" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">NEUTRAL TRIPS</text>
+    <text x="96" y="806" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">GUARANTEED TIGERS</text>
+
+  <text x="96" y="930" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="600" fill="#d8c78f" letter-spacing="2">FULLY REFUNDABLE  •  NO CANCELLATION FEE</text>
+
+  <rect x="96" y="1240" width="360" height="74" rx="37" fill="#d8c78f"/>
+  <text x="276" y="1283" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#2c2416" letter-spacing="1.5">BOOK THE ESCAPE</text>
+
+  <text x="96" y="1430" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#ffffff" fill-opacity="0.55" letter-spacing="2">terratrail.com  •  DEMO CREATIVE FOR COMPLIANCE REVIEW</text>
+</svg>

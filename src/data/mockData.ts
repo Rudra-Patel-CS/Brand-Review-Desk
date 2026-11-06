@@ -1,4 +1,5 @@
 import { BrandRule, CampaignPreset, ReviewRecord, DEFAULT_RULES } from '../utils/rulesEngine.js';
+import demoCatalog from '../../data/demo-catalog.json';
 
 export interface Brand {
   id: string;
@@ -7,7 +8,6 @@ export interface Brand {
   rulebookVersion: string;
   activeRulesCount: number;
   approvedClaimsCount: number;
-  isDemo?: boolean;
 }
 
 export const BRANDS: Brand[] = [
@@ -34,7 +34,8 @@ export const BRANDS: Brand[] = [
     rulebookVersion: 'Commercial Compliance v3.0',
     activeRulesCount: 35,
     approvedClaimsCount: 11
-  }
+  },
+  ...(demoCatalog.brands as unknown as Brand[])
 ];
 
 export const INITIAL_PRESETS: CampaignPreset[] = [
@@ -175,7 +176,8 @@ export const INITIAL_PRESETS: CampaignPreset[] = [
         bbox: { top: 78.5, left: 83.5, width: 6.5, height: 6.0 }
       }
     ]
-  }
+  },
+  ...(demoCatalog.campaigns as unknown as CampaignPreset[])
 ];
 
 export const INITIAL_REVIEWS: ReviewRecord[] = [
@@ -329,5 +331,75 @@ export const APPROVED_CLAIMS = [
     details: 'SIG Declaration D059124 • Firmware 2.4+',
     status: 'Unrestricted',
     brandId: 'novatech'
+  },
+  {
+    id: 'claim-6',
+    title: 'Broad-Spectrum SPF 50 Tested',
+    details: 'In-vivo test report SPF-2026-118 • Valid through Dec 2027',
+    status: 'Unrestricted',
+    brandId: 'aurora'
+  },
+  {
+    id: 'claim-7',
+    title: 'Readily Biodegradable Formula',
+    details: 'OECD 301B test • Verdigris Labs report 2026-04',
+    status: 'Requires Batch ID',
+    brandId: 'verdant'
+  },
+  {
+    id: 'claim-8',
+    title: 'Informed-Sport Batch Certified',
+    details: 'Certificate IS-2026-441 • Every production lot',
+    status: 'Unrestricted',
+    brandId: 'peakform'
+  },
+  {
+    id: 'claim-9',
+    title: 'Deposit Insurance up to ₹5 Lakh',
+    details: 'DICGC coverage • Applicable to eligible deposits',
+    status: 'Requires Disclaimer',
+    brandId: 'lumina'
+  },
+  {
+    id: 'claim-10',
+    title: 'Carbon Offset Partner Verified',
+    details: 'Gold Standard registry • Project GS-1182',
+    status: 'Requires Disclaimer',
+    brandId: 'terratrail'
+  },
+  {
+    id: 'claim-11',
+    title: 'Curriculum Reviewed by Industry Mentors',
+    details: 'Advisory board review • Updated quarterly',
+    status: 'Unrestricted',
+    brandId: 'bytebloom'
+  },
+  {
+    id: 'claim-12',
+    title: 'FSSAI Licensed Manufacturing',
+    details: 'License 10024051000123 • Valid through Mar 2028',
+    status: 'Unrestricted',
+    brandId: 'solstice'
+  },
+  {
+    id: 'claim-13',
+    title: 'SOC 2 Type II Audited Controls',
+    details: 'Audit period Jan-Dec 2025 • Report available under NDA',
+    status: 'Requires NDA',
+    brandId: 'nimbus'
+  },
+  {
+    id: 'claim-14',
+    title: 'GOTS Certified Organic Cotton',
+    details: 'Certificate GOTS-2026-7781 • Scope: infant apparel',
+    status: 'Requires Batch ID',
+    brandId: 'petalpine'
+  },
+  {
+    id: 'claim-15',
+    title: 'UL 1026 Outdoor Cooking Certified',
+    details: 'Certificate E-518204 • Model PFG-900 only',
+    status: 'Unrestricted',
+    brandId: 'forgeflame'
   }
 ];

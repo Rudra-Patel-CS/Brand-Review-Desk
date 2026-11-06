@@ -1,3 +1,5 @@
+import demoCatalog from '../../data/demo-catalog.json';
+
 export interface BrandRule {
   id: string;
   brand: string; // 'freshbites' | 'arka' | 'novatech' | 'global'
@@ -11,7 +13,6 @@ export interface BrandRule {
   suggestedRemedy?: string;
   enabled: boolean;
   appliesTo: ('caption' | 'ocr')[];
-  isDemo?: boolean;
 }
 
 export interface ComplianceFinding {
@@ -44,17 +45,6 @@ export interface CampaignPreset {
   ocrConfidence: number;
   initialFindings: ComplianceFinding[];
   status: 'action_required' | 'under_review' | 'approved' | 'rejected';
-  sourceName?: string;
-  sourceUrl?: string;
-  licenseName?: string;
-  licenseUrl?: string;
-  attribution?: string;
-  sourceDescription?: string;
-  isDemo?: boolean;
-  referenceOnly?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-  auditAt?: string;
 }
 
 export interface ReviewRecord {
@@ -78,7 +68,6 @@ export interface ReviewRecord {
   newCopy?: string;
   findings: ComplianceFinding[];
   notes?: string;
-  isDemo?: boolean;
 }
 
 export const DEFAULT_RULES: BrandRule[] = [
@@ -207,7 +196,8 @@ export const DEFAULT_RULES: BrandRule[] = [
     suggestedRemedy: 'Up to 30h playtime at 50% volume',
     enabled: true,
     appliesTo: ['caption', 'ocr']
-  }
+  },
+  ...(demoCatalog.rules as unknown as BrandRule[])
 ];
 
 export function runComplianceAudit(

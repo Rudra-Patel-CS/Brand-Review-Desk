@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "seed": "node scripts/seed_mongodb.js",
-    "import:images": "node scripts/import_commons_references.js"
+    "seed": "node scripts/seed_mongodb.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",

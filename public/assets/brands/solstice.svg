@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1500" viewBox="0 0 1200 1500" role="img" aria-label="SOLSTICE PREMIUM MIXERS">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a1126"/>
+      <stop offset="100%" stop-color="#5c2338"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f4ad63" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#f4ad63" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="1500" fill="url(#bg)"/>
+  <circle cx="983.9999999999999" cy="270" r="380" fill="url(#glow)"/>
+  <circle cx="144" cy="1380" r="300" fill="#f4ad63" opacity="0.08"/>
+  <circle cx="1080" cy="1170" r="220" fill="none" stroke="#f4ad63" stroke-opacity="0.22" stroke-width="2"/>
+  <circle cx="1080" cy="1170" r="160" fill="none" stroke="#f4ad63" stroke-opacity="0.14" stroke-width="2"/>
+
+  <text x="96" y="150" font-family="Georgia, 'Times New Roman', serif" font-size="62" font-weight="700" fill="#ffffff" letter-spacing="2">SOLSTICE</text>
+  <text x="96" y="190" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#f4ad63" letter-spacing="6">BEVERAGES</text>
+  <line x1="96" y1="251" x2="556" y2="251" stroke="#f4ad63" stroke-opacity="0.5" stroke-width="2"/>
+  <text x="96" y="287" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#ffffff" fill-opacity="0.72" letter-spacing="4">PREMIUM MIXERS</text>
+
+  <text x="96" y="610" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">ZERO SUGAR</text>
+    <text x="96" y="708" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">CURES HANGOVERS</text>
+    <text x="96" y="806" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700" fill="#ffffff" letter-spacing="-1">PARTY ALL NIGHT</text>
+
+  <text x="96" y="930" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="600" fill="#f4ad63" letter-spacing="2">100% NATURAL  •  SMALL-BATCH TONICS</text>
+
+  <rect x="96" y="1240" width="360" height="74" rx="37" fill="#f4ad63"/>
+  <text x="276" y="1283" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#2a1126" letter-spacing="1.5">FIND A STOCKIST</text>
+
+  <text x="96" y="1430" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#ffffff" fill-opacity="0.55" letter-spacing="2">solstice.com  •  DEMO CREATIVE FOR COMPLIANCE REVIEW</text>
+</svg>

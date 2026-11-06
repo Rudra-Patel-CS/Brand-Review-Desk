@@ -54,11 +54,18 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    max-width: 100%;
+  }
+
   body {
     background-color: var(--color-surface);
     color: var(--color-on-surface);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
   }
 }
 

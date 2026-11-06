@@ -104,7 +104,7 @@ export const NewRuleModal: React.FC<NewRuleModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
                 Rule ID
@@ -164,7 +164,7 @@ export const NewRuleModal: React.FC<NewRuleModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
                 Category
@@ -227,7 +227,7 @@ export const NewRuleModal: React.FC<NewRuleModalProps> = ({
 
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-              Suggested correction text
+              Suggested Pre-Approved Alternative Remedy
             </label>
             <input
               type="text"
