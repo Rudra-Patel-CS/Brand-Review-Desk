@@ -1,0 +1,27 @@
+{
+  "name": "brand-review-desk",
+  "version": "1.0.0",
+  "description": "Check every piece of content against the approved brand rules before it goes live. Content goes in, it is checked against the loaded guidelines/terms/facts, every issue is explained with the exact rule it breaks, and a human makes the final decision.",
+  "main": "app.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node server.js --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rudra-Patel-CS/Brand-Review-Desk.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Rudra-Patel-CS/Brand-Review-Desk/issues"
+  },
+  "homepage": "https://github.com/Rudra-Patel-CS/Brand-Review-Desk#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "mongodb": "^7.8.0"
+  }
+}
