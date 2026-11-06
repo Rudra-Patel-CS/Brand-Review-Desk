@@ -3,8 +3,13 @@ try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch(e) {}
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
-const uri = process.env.MONGO_URI || "mongodb+srv://db_test:test074@project-1.xzfwn9j.mongodb.net/Brand_Review_Desk?retryWrites=true&w=majority&appName=project-1";
+const uri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || "Brand_Review_Desk";
+
+if (!uri) {
+  console.error('MONGO_URI must be configured before seeding. No database was changed.');
+  process.exit(1);
+}
 
 const brands = [
   {

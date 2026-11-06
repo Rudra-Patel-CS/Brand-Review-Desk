@@ -8,7 +8,7 @@ try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
 const { MongoClient, ObjectId } = require('mongodb');
 require('dotenv').config();
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://db_test:password%402177@project-1.xzfwn9j.mongodb.net/Brand_Review_Desk?retryWrites=true&w=majority&appName=project-1";
+const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = process.env.DB_NAME || "Brand_Review_Desk";
 
 let client = null;
@@ -243,6 +243,7 @@ async function connectDB() {
   if (isConnected && db) return db;
 
   try {
+    if (!MONGO_URI) throw new Error('MONGO_URI is not configured');
     client = new MongoClient(MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000
