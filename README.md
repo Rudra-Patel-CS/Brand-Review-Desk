@@ -1,7 +1,7 @@
 <div align="center">
 
-# Brand Review Desk
-
+# 
+Brand Review Desk
 ### Choose a campaign. Review its flags. Record a decision.
 
 An interactive prototype for checking campaign copy against brand rules.

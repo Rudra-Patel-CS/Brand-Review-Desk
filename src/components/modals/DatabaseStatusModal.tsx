@@ -3,17 +3,31 @@ import React from 'react';
 interface DatabaseStatusModalProps {
   isOpen: boolean;
   onClose: () => void;
-  isOfflineMode: boolean;
-  onToggleOffline: () => void;
+  connected: boolean;
+  database: string;
+  error: string | null;
+  lastUpdated: string | null;
+  counts: { brands: number; rules: number; campaigns: number; reviews: number };
+  onRetry: () => void;
 }
 
 export const DatabaseStatusModal: React.FC<DatabaseStatusModalProps> = ({
   isOpen,
   onClose,
-  isOfflineMode,
-  onToggleOffline
+  connected,
+  database,
+  error,
+  lastUpdated,
+  counts,
+  onRetry
 }) => {
   if (!isOpen) return null;
+  const rows = [
+    ['Brands', counts.brands],
+    ['Rules', counts.rules],
+    ['Campaigns and references', counts.campaigns],
+    ['Reviews', counts.reviews]
+  ] as const;
 
   return (
     <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
@@ -22,97 +36,38 @@ export const DatabaseStatusModal: React.FC<DatabaseStatusModalProps> = ({
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-secondary text-[22px]">database</span>
             <div>
-              <h3 className="font-serif text-lg font-medium text-on-surface">Data Store &amp; Storage Engine</h3>
-              <span className="text-xs text-on-surface-variant font-mono">Vault: Brand_Review_Desk • v2.0</span>
+              <h3 className="font-serif text-lg font-medium text-on-surface">Database connection</h3>
+              <span className="text-xs text-on-surface-variant font-mono">{database}</span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface"
-          >
+          <button type="button" onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface">
             <span className="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
-
         <div className="p-5 space-y-4">
-          <div
-            className={`p-3.5 rounded-xl border flex items-start gap-3 transition-colors ${
-              isOfflineMode
-                ? 'bg-amber-50/80 border-amber-200 text-amber-950'
-                : 'bg-secondary-container/30 border-secondary-fixed-dim text-on-surface'
-            }`}
-          >
-            <span
-              className={`material-symbols-outlined text-[20px] flex-shrink-0 mt-0.5 ${
-                isOfflineMode ? 'text-amber-700' : 'text-secondary'
-              }`}
-            >
-              {isOfflineMode ? 'wifi_off' : 'cloud_sync'}
-            </span>
+          <div className={`p-3.5 rounded-xl border flex items-start gap-3 ${connected ? 'bg-secondary-container/30 border-secondary-fixed-dim text-on-surface' : 'bg-amber-50 border-amber-200 text-amber-950'}`}>
+            <span className={`material-symbols-outlined text-[20px] ${connected ? 'text-secondary' : 'text-amber-700'}`}>{connected ? 'cloud_done' : 'cloud_off'}</span>
             <div className="text-xs space-y-0.5">
-              <span className="font-bold block">
-                {isOfflineMode ? 'Offline Resilient Mode Enabled' : 'Cloud Database Online & Synchronized'}
-              </span>
-              <p className="text-[11px] opacity-90 leading-relaxed">
-                {isOfflineMode
-                  ? 'App is operating autonomously from local cache storage. OCR models and brand rules run in-browser without remote network dependency.'
-                  : 'Live audit records, rule edits, and campaign snapshots are synchronized to the compliance database.'}
-              </p>
+              <span className="font-bold block">{connected ? 'Connected to MongoDB' : 'Not connected'}</span>
+              <p className="text-[11px] leading-relaxed">{connected ? 'The visible workspace records come from the database. The app checks for changes every 10 seconds.' : error || 'The database could not be reached.'}</p>
             </div>
           </div>
-
           <div className="p-3 rounded-lg bg-surface-container-low border border-surface-container-high space-y-2 text-xs">
-            <div className="flex justify-between items-center">
-              <span className="text-on-surface-variant">Primary Database:</span>
-              <span className="font-mono font-medium text-on-surface">Cloud Enterprise Database (Connected)</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-on-surface-variant">Database Vault:</span>
-              <span className="font-mono text-secondary font-semibold">Brand_Review_Desk</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-on-surface-variant">Active Collections:</span>
-              <span className="font-mono text-on-surface">rules, campaigns, reviews, brands</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-on-surface-variant">OCR Engine Engine:</span>
-              <span className="font-mono text-on-surface">Tesseract Client WASM Offline Bundle</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-on-surface-variant">Roundtrip Latency:</span>
-              <span className="font-mono text-secondary">
-                {isOfflineMode ? '0 ms (Local cache)' : '18 ms (Low-latency cluster)'}
-              </span>
+            {rows.map(([label, value]) => (
+              <div key={label} className="flex justify-between items-center">
+                <span className="text-on-surface-variant">{label}</span>
+                <span className="font-mono font-semibold text-on-surface">{value}</span>
+              </div>
+            ))}
+            <div className="flex justify-between items-center pt-2 border-t border-surface-container-high">
+              <span className="text-on-surface-variant">Last successful refresh</span>
+              <span className="font-mono text-on-surface">{lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : 'Never'}</span>
             </div>
           </div>
-
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={onToggleOffline}
-              className={`w-full py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-sm ${
-                isOfflineMode
-                  ? 'bg-secondary text-on-secondary hover:bg-secondary-fixed'
-                  : 'bg-surface-container-highest hover:bg-surface-container text-on-surface'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">
-                {isOfflineMode ? 'cloud_upload' : 'cloud_off'}
-              </span>
-              {isOfflineMode ? 'Reconnect to Cloud Database' : 'Simulate Offline Air-Gapped Mode'}
-            </button>
-          </div>
+          {!connected && <button type="button" onClick={onRetry} className="w-full py-2.5 px-3 rounded-lg bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container">Retry database connection</button>}
         </div>
-
         <div className="px-5 py-3.5 bg-surface-container-low border-t border-surface-container-high flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container"
-          >
-            Close
-          </button>
+          <button type="button" onClick={onClose} className="px-4 py-1.5 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container">Close</button>
         </div>
       </div>
     </div>

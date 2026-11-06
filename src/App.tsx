@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from './components/Header.js';
 import { Navigation } from './components/Navigation.js';
 import { ReviewContent } from './components/ReviewContent.js';
@@ -12,76 +12,49 @@ import { ApproveExportModal } from './components/modals/ApproveExportModal.js';
 import { DismissNoteModal } from './components/modals/DismissNoteModal.js';
 import { DatabaseStatusModal } from './components/modals/DatabaseStatusModal.js';
 import { PlannedFeatureModal } from './components/modals/PlannedFeatureModal.js';
+import { Brand } from './data/mockData.js';
+import { BrandRule, CampaignPreset, ComplianceFinding, ReviewRecord } from './utils/rulesEngine.js';
 
-import { BRANDS, INITIAL_PRESETS, INITIAL_REVIEWS, Brand } from './data/mockData.js';
-import {
-  BrandRule,
-  DEFAULT_RULES,
-  CampaignPreset,
-  ComplianceFinding,
-  ReviewRecord
-} from './utils/rulesEngine.js';
+type Tab = 'review' | 'rules' | 'history' | 'insights';
+interface WorkspaceSnapshot {
+  connected: boolean;
+  database: string;
+  updatedAt: string;
+  brands: Brand[];
+  rules: BrandRule[];
+  campaigns: CampaignPreset[];
+  reviews: ReviewRecord[];
+}
+
+async function requestApi<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers
+    }
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+  return body as T;
+}
 
 export default function App() {
-  // Navigation state
-  const [activeTab, setActiveTab] = useState<'review' | 'rules' | 'history' | 'insights'>('review');
-
-  // Brand state
-  const [brands] = useState<Brand[]>(BRANDS);
-  const [activeBrand, setActiveBrand] = useState<Brand>(BRANDS[0]);
-
-  // Brand Rules state (hydrated from localStorage or default)
-  const [rules, setRules] = useState<BrandRule[]>(() => {
-    try {
-      const saved = localStorage.getItem('brd_brand_rules');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return DEFAULT_RULES;
-  });
-
-  // Save rules to localStorage on change
-  useEffect(() => {
-    try {
-      localStorage.setItem('brd_brand_rules', JSON.stringify(rules));
-    } catch {
-      // ignore
-    }
-  }, [rules]);
-
-  // Campaign presets
-  const [campaigns, setCampaigns] = useState<CampaignPreset[]>(INITIAL_PRESETS);
-  const [activeCampaign, setActiveCampaign] = useState<CampaignPreset>(INITIAL_PRESETS[0]);
-
-  // Review history
-  const [reviews, setReviews] = useState<ReviewRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('brd_review_history');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return INITIAL_REVIEWS;
-  });
-
-  // Save reviews to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('brd_review_history', JSON.stringify(reviews));
-    } catch {
-      // ignore
-    }
-  }, [reviews]);
-
-  // Offline / Storage state
-  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('review');
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const lastRecordsRef = useRef('');
+  const [activeBrandId, setActiveBrandId] = useState('');
+  const [activeCampaignId, setActiveCampaignId] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Modals state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isOcrOpen, setIsOcrOpen] = useState(false);
-  const [ocrModalData, setOcrModalData] = useState({ text: '', confidence: 98 });
+  const [ocrModalData, setOcrModalData] = useState({ text: '' });
+  const [saveOcrText, setSaveOcrText] = useState<((text: string) => Promise<void>) | null>(null);
   const [isNewRuleOpen, setIsNewRuleOpen] = useState(false);
   const [ruleToEdit, setRuleToEdit] = useState<BrandRule | null>(null);
   const [isApproveOpen, setIsApproveOpen] = useState(false);
@@ -91,208 +64,307 @@ export default function App() {
     findings: ComplianceFinding[];
   } | null>(null);
   const [dismissFinding, setDismissFinding] = useState<ComplianceFinding | null>(null);
+  const [dismissAction, setDismissAction] = useState<((note: string) => void) | null>(null);
   const [isDbStatusOpen, setIsDbStatusOpen] = useState(false);
   const [isPlannedOpen, setIsPlannedOpen] = useState(false);
   const [plannedTitle, setPlannedTitle] = useState('Planned Feature');
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2800);
-  };
+  const brands = workspace?.brands || [];
+  const rules = workspace?.rules || [];
+  const campaigns = workspace?.campaigns || [];
+  const reviews = workspace?.reviews || [];
+  const activeBrand = brands.find((brand) => brand.id === activeBrandId) || brands[0];
+  const activeCampaign = campaigns.find((campaign) => campaign.id === activeCampaignId && (campaign.brandId === activeBrand?.id || campaign.brandId === 'global'))
+    || campaigns.find((campaign) => campaign.brandId === activeBrand?.id || campaign.brandId === 'global');
 
-  // Rule actions
-  const handleToggleRule = (ruleId: string) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === ruleId ? { ...r, enabled: !r.enabled } : r))
-    );
-    const rule = rules.find((r) => r.id === ruleId);
-    showToast(`Rule ${ruleId} ${rule?.enabled ? 'disabled' : 'enabled'}`);
-  };
-
-  const handleDeleteRule = (ruleId: string) => {
-    setRules((prev) => prev.filter((r) => r.id !== ruleId));
-    showToast(`Rule ${ruleId} deleted`);
-  };
-
-  const handleSaveRule = (savedRule: BrandRule) => {
-    setRules((prev) => {
-      const exists = prev.some((r) => r.id === savedRule.id);
-      if (exists) {
-        return prev.map((r) => (r.id === savedRule.id ? savedRule : r));
+  const refreshWorkspace = useCallback(async () => {
+    try {
+      const snapshot = await requestApi<WorkspaceSnapshot>('/api/workspace');
+      const recordSignature = JSON.stringify([snapshot.brands, snapshot.rules, snapshot.campaigns, snapshot.reviews]);
+      if (recordSignature !== lastRecordsRef.current) {
+        lastRecordsRef.current = recordSignature;
+        setWorkspace(snapshot);
+      } else if (!workspace) {
+        setWorkspace(snapshot);
       }
-      return [savedRule, ...prev];
-    });
-    showToast(`Rule ${savedRule.id} saved`);
+      setConnectionError(null);
+      setLastSync(new Date().toISOString());
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Could not read the database');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    void refreshWorkspace();
+    const timer = window.setInterval(() => void refreshWorkspace(), 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (activeBrand && !activeBrandId) setActiveBrandId(activeBrand.id);
+  }, [activeBrand, activeBrandId]);
+
+  useEffect(() => {
+    if (activeCampaign && activeCampaign.id !== activeCampaignId) setActiveCampaignId(activeCampaign.id);
+  }, [activeCampaign, activeCampaignId]);
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage(null), 3200);
   };
 
-  const handleResetRules = () => {
-    setRules(DEFAULT_RULES);
-    showToast('Reset brand rules to system default');
+  const saveCampaign = async (campaign: CampaignPreset, method: 'POST' | 'PUT' = 'PUT') => {
+    const url = method === 'POST'
+      ? '/api/workspace/campaigns'
+      : `/api/workspace/campaigns/${encodeURIComponent(campaign.id)}`;
+    await requestApi(url, { method, body: JSON.stringify(campaign) });
+    await refreshWorkspace();
   };
 
-  // Campaign upload action
-  const handleAddCampaign = (newCampaign: CampaignPreset) => {
-    setCampaigns((prev) => [newCampaign, ...prev]);
-    setActiveCampaign(newCampaign);
-    showToast(`Uploaded ${newCampaign.title} (${newCampaign.code})`);
+  const handleToggleRule = async (ruleId: string) => {
+    const rule = rules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    try {
+      await requestApi(`/api/workspace/rules/${encodeURIComponent(rule.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...rule, enabled: !rule.enabled })
+      });
+      await refreshWorkspace();
+      showToast(`Saved ${rule.id} to the database`);
+    } catch (error) {
+      showToast(`Rule was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+    }
   };
 
-  // Approve & file to Review History
-  const handleConfirmApproval = () => {
+  const handleDeleteRule = async (ruleId: string) => {
+    const rule = rules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    try {
+      await requestApi(`/api/workspace/rules/${encodeURIComponent(ruleId)}?brand=${encodeURIComponent(rule.brand)}`, { method: 'DELETE' });
+      await refreshWorkspace();
+      showToast(`Deleted ${ruleId} from the database`);
+    } catch (error) {
+      showToast(`Rule was not deleted: ${error instanceof Error ? error.message : 'database error'}`);
+    }
+  };
+
+  const handleSaveRule = async (savedRule: BrandRule) => {
+    try {
+      await requestApi(`/api/workspace/rules/${encodeURIComponent(savedRule.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(savedRule)
+      });
+      await refreshWorkspace();
+      showToast(`Saved ${savedRule.id} to the database`);
+    } catch (error) {
+      showToast(`Rule was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+    }
+  };
+
+  const handleAddCampaign = async (newCampaign: CampaignPreset) => {
+    try {
+      await saveCampaign(newCampaign, 'POST');
+      setActiveCampaignId(newCampaign.id);
+      setActiveBrandId(newCampaign.brandId === 'global' ? (activeBrand?.id || '') : newCampaign.brandId);
+      setIsUploadOpen(false);
+      showToast(`Saved ${newCampaign.title} to the database`);
+    } catch (error) {
+      showToast(`Campaign was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+      throw error;
+    }
+  };
+
+  const handleConfirmApproval = async () => {
     if (!approveData) return;
-
-    const newRecord: ReviewRecord = {
-      id: `rev-${Date.now()}`,
-      dossierNumber: `BRD-${Math.floor(1000 + Math.random() * 9000)}`,
-      campaignTitle: approveData.campaign.title,
-      brandId: approveData.campaign.brandId,
-      brandName: approveData.campaign.brandName,
-      channel: approveData.campaign.channel,
-      reviewedAt: 'Just now',
-      reviewerName: 'Elena Rostova, JD',
-      reviewerRole: 'Senior Brand Counsel, Global Food Group',
-      auditId: `E8F-${Math.floor(10 + Math.random() * 90)}-CERT`,
-      sha256Hash: '4f9ca821' + Math.random().toString(16).slice(2, 12) + 'a72e8b',
-      status: 'approved',
-      findingsCount: approveData.findings.length,
-      clearedCount: approveData.findings.length,
-      openCount: 0,
-      imageUrl: approveData.campaign.imageUrl,
-      oldCopy: approveData.campaign.caption,
-      newCopy: approveData.caption,
-      findings: approveData.findings,
-      notes: 'Approved without objections by Elena Rostova. Cryptographic attestation generated.'
+    const { campaign, caption, findings } = approveData;
+    const clearedCount = findings.filter((finding) => finding.status !== 'open').length;
+    const openCount = findings.length - clearedCount;
+    const dossierNumber = `BRD-${Date.now()}`;
+    const record: ReviewRecord = {
+      id: `review-${Date.now()}`,
+      dossierNumber,
+      campaignTitle: campaign.title,
+      brandId: campaign.brandId,
+      brandName: campaign.brandName,
+      channel: campaign.channel,
+      reviewedAt: new Date().toISOString(),
+      reviewerName: 'Reviewer not recorded',
+      reviewerRole: '',
+      auditId: '',
+      sha256Hash: '',
+      status: openCount ? 'conditional' : 'approved',
+      findingsCount: findings.length,
+      clearedCount,
+      openCount,
+      imageUrl: campaign.imageUrl,
+      oldCopy: campaign.caption,
+      newCopy: caption,
+      findings,
+      isDemo: Boolean(campaign.isDemo),
+      notes: 'Review record created from the workspace.'
     };
 
-    setReviews((prev) => [newRecord, ...prev]);
-    showToast(`Authorized & exported dossier #${newRecord.dossierNumber}`);
-    setActiveTab('history');
+    try {
+      await saveCampaign({ ...campaign, caption, initialFindings: findings, status: openCount ? 'under_review' : 'approved' });
+      await requestApi('/api/workspace/reviews', { method: 'POST', body: JSON.stringify(record) });
+      await refreshWorkspace();
+      setIsApproveOpen(false);
+      setApproveData(null);
+      setActiveTab('history');
+      showToast(`Saved review ${dossierNumber}`);
+    } catch (error) {
+      showToast(`Review was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+    }
   };
 
-  // Dismiss finding with note
-  const handleConfirmDismiss = (findingId: string, note: string) => {
-    // Handled in ReviewContent findings state or through custom updater
-    showToast(`Finding ${findingId} dismissed with counsel note`);
+  const handleConfirmDismiss = (_findingId: string, note: string) => {
+    dismissAction?.(note);
+    setDismissAction(null);
+    setDismissFinding(null);
+    showToast('Decision updated. Save and evaluate the campaign to keep it in the database.');
   };
 
-  const handleToggleOffline = () => {
-    setIsOfflineMode((prev) => {
-      const next = !prev;
-      showToast(
-        next
-          ? 'Switched to Offline Fallback Mode (IndexedDB active)'
-          : 'Reconnected to MongoDB Atlas Database'
-      );
-      return next;
-    });
+  const handleOcrModalClose = async () => {
+    try {
+      await saveOcrText?.(ocrModalData.text);
+      setIsOcrOpen(false);
+      setSaveOcrText(null);
+      showToast('Artwork text saved to the database');
+    } catch (error) {
+      showToast(`Artwork text was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+    }
+  };
+
+  const connected = Boolean(workspace?.connected && !connectionError);
+  const recordCounts = {
+    brands: brands.length,
+    rules: rules.length,
+    campaigns: campaigns.length,
+    reviews: reviews.length
   };
 
   return (
     <div className="min-h-screen bg-surface flex flex-col font-sans text-on-surface antialiased selection:bg-secondary-container selection:text-on-secondary-container">
-      {/* Toast Notification Banner */}
       {toastMessage && (
-        <div className="fixed top-22 right-4 z-50 bg-inverse-surface text-inverse-on-surface px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-mono border border-outline/30 animate-in fade-in slide-in-from-top-2 duration-150">
-          <span className="material-symbols-outlined text-[16px] text-secondary-fixed">
-            info
-          </span>
+        <div className="fixed top-22 right-4 z-50 bg-inverse-surface text-inverse-on-surface px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs border border-outline/30 animate-in fade-in slide-in-from-top-2 duration-150">
+          <span className="material-symbols-outlined text-[16px] text-secondary-fixed">info</span>
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Persistent Application Header */}
       <Header
         brands={brands}
         activeBrand={activeBrand}
-        onSelectBrand={(b) => {
-          setActiveBrand(b);
-          // Auto select a preset belonging to this brand if available
-          const brandPreset = campaigns.find((c) => c.brandId === b.id);
-          if (brandPreset) setActiveCampaign(brandPreset);
-          showToast(`Active brand context: ${b.name}`);
+        onSelectBrand={(brand) => {
+          setActiveBrandId(brand.id);
+          const firstCampaign = campaigns.find((campaign) => campaign.brandId === brand.id);
+          if (firstCampaign) setActiveCampaignId(firstCampaign.id);
         }}
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        isOfflineMode={isOfflineMode}
-        onToggleOffline={handleToggleOffline}
+        databaseConnected={connected}
         onOpenDbStatus={() => setIsDbStatusOpen(true)}
       />
 
-      {/* Main View Area */}
+      {connectionError && (
+        <div className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-7xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 flex items-center justify-between gap-3">
+          <span>{workspace ? 'Database connection lost. Showing the last records received.' : `Cannot load the workspace: ${connectionError}`}</span>
+          <button type="button" onClick={() => void refreshWorkspace()} className="shrink-0 underline font-semibold">Retry</button>
+        </div>
+      )}
+
       <main className="flex-1 w-full pb-20 md:pb-12">
-        {activeTab === 'review' && (
-          <ReviewContent
-            activeBrand={activeBrand}
-            campaigns={campaigns}
-            activeCampaign={activeCampaign}
-            onSelectCampaign={(c) => {
-              setActiveCampaign(c);
-              const brand = brands.find((b) => b.id === c.brandId);
-              if (brand) setActiveBrand(brand);
-            }}
-            rules={rules}
-            onOpenUpload={() => setIsUploadOpen(true)}
-            onOpenOcrText={(text, conf) => {
-              setOcrModalData({ text, confidence: conf });
-              setIsOcrOpen(true);
-            }}
-            onOpenApproveModal={(camp, cap, f) => {
-              setApproveData({ campaign: camp, caption: cap, findings: f });
-              setIsApproveOpen(true);
-            }}
-            onOpenDismissModal={(finding) => setDismissFinding(finding)}
-            onOpenPlannedModal={(title) => {
-              setPlannedTitle(title);
-              setIsPlannedOpen(true);
-            }}
-          />
-        )}
+        {isLoading && !workspace ? (
+          <div className="max-w-7xl mx-auto px-6 py-24 text-center text-on-surface-variant">Connecting to the database…</div>
+        ) : !workspace ? (
+          <section className="max-w-xl mx-auto px-6 py-24 text-center space-y-4">
+            <span className="material-symbols-outlined text-error text-4xl">cloud_off</span>
+            <h1 className="font-serif text-2xl text-primary">Database connection required</h1>
+            <p className="text-sm text-on-surface-variant">The app did not load local or sample records. Check the server’s MongoDB connection, then try again.</p>
+            <button type="button" onClick={() => void refreshWorkspace()} className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold">Retry connection</button>
+          </section>
+        ) : (
+          <>
+            {activeTab === 'review' && (
+              activeCampaign && activeBrand ? (
+                <ReviewContent
+                  activeBrand={activeBrand}
+                  campaigns={campaigns.filter((campaign) => campaign.brandId === activeBrand.id || campaign.brandId === 'global')}
+                  activeCampaign={activeCampaign}
+                  onSelectCampaign={(campaign) => setActiveCampaignId(campaign.id)}
+                  rules={rules}
+                  onSaveCampaign={saveCampaign}
+                  onOpenUpload={() => setIsUploadOpen(true)}
+                  onOpenOcrText={(text, saveText) => {
+                    setOcrModalData({ text });
+                    setSaveOcrText(() => saveText);
+                    setIsOcrOpen(true);
+                  }}
+                  onOpenApproveModal={(campaign, caption, findings) => {
+                    setApproveData({ campaign, caption, findings });
+                    setIsApproveOpen(true);
+                  }}
+                  onOpenDismissModal={(finding, applyDecision) => {
+                    setDismissFinding(finding);
+                    setDismissAction(() => applyDecision);
+                  }}
+                  onOpenPlannedModal={(title) => {
+                    setPlannedTitle(title);
+                    setIsPlannedOpen(true);
+                  }}
+                  onShowToast={showToast}
+                />
+              ) : (
+                <section className="max-w-3xl mx-auto px-6 py-24 text-center space-y-3">
+                  <span className="material-symbols-outlined text-secondary text-4xl">photo_library</span>
+                  <h1 className="font-serif text-2xl text-primary">No campaign images in the database yet</h1>
+                  <p className="text-sm text-on-surface-variant">Add a campaign record to the campaigns collection or run <code>npm run import:images</code> to add openly licensed reference images.</p>
+                  {activeBrand && <button type="button" onClick={() => setIsUploadOpen(true)} className="mt-2 px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold">Add your first campaign</button>}
+                </section>
+              )
+            )}
 
-        {activeTab === 'rules' && (
-          <BrandRules
-            brands={brands}
-            activeBrand={activeBrand}
-            onSelectBrand={setActiveBrand}
-            rules={rules}
-            onToggleRule={handleToggleRule}
-            onDeleteRule={handleDeleteRule}
-            onOpenNewRule={(rule) => {
-              setRuleToEdit(rule || null);
-              setIsNewRuleOpen(true);
-            }}
-            onResetRules={handleResetRules}
-          />
-        )}
+            {activeTab === 'rules' && activeBrand && (
+              <BrandRules
+                brands={brands}
+                activeBrand={activeBrand}
+                onSelectBrand={(brand) => setActiveBrandId(brand.id)}
+                rules={rules}
+                onToggleRule={handleToggleRule}
+                onDeleteRule={handleDeleteRule}
+                onOpenNewRule={(rule) => {
+                  setRuleToEdit(rule || null);
+                  setIsNewRuleOpen(true);
+                }}
+                databaseConnected={connected}
+              />
+            )}
 
-        {activeTab === 'history' && <ReviewHistory reviews={reviews} />}
+            {activeTab === 'rules' && !activeBrand && (
+              <div className="max-w-3xl mx-auto px-6 py-24 text-center text-on-surface-variant">No brand records are available in MongoDB.</div>
+            )}
 
-        {activeTab === 'insights' && (
-          <InsightsAnalytics
-            activeBrand={activeBrand}
-            onOpenPlannedModal={(title) => {
-              setPlannedTitle(title);
-              setIsPlannedOpen(true);
-            }}
-          />
+            {activeTab === 'history' && <ReviewHistory reviews={reviews} />}
+
+            {activeTab === 'insights' && (
+              <InsightsAnalytics activeBrand={activeBrand} campaigns={campaigns} reviews={reviews} rules={rules} />
+            )}
+          </>
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
       <Navigation activeTab={activeTab} onSelectTab={setActiveTab} />
 
-      {/* Modals & Dialogs */}
       <OcrTextModal
         isOpen={isOcrOpen}
-        onClose={() => setIsOcrOpen(false)}
+        onClose={() => void handleOcrModalClose()}
         ocrText={ocrModalData.text}
-        confidence={ocrModalData.confidence}
-        onUpdateOcrText={(newText) => {
-          setOcrModalData((prev) => ({ ...prev, text: newText }));
-          showToast('Updated extracted OCR text');
-        }}
+        onUpdateOcrText={(text) => setOcrModalData({ text })}
       />
 
+      {activeBrand && (
       <UploadCreativeModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
@@ -300,18 +372,21 @@ export default function App() {
         activeBrand={activeBrand}
         onAddCampaign={handleAddCampaign}
       />
+      )}
 
-      <NewRuleModal
-        isOpen={isNewRuleOpen}
-        onClose={() => {
-          setIsNewRuleOpen(false);
-          setRuleToEdit(null);
-        }}
-        brands={brands}
-        activeBrand={activeBrand}
-        ruleToEdit={ruleToEdit}
-        onSaveRule={handleSaveRule}
-      />
+      {activeBrand && (
+        <NewRuleModal
+          isOpen={isNewRuleOpen}
+          onClose={() => {
+            setIsNewRuleOpen(false);
+            setRuleToEdit(null);
+          }}
+          brands={brands}
+          activeBrand={activeBrand}
+          ruleToEdit={ruleToEdit}
+          onSaveRule={handleSaveRule}
+        />
+      )}
 
       {approveData && (
         <ApproveExportModal
@@ -328,8 +403,11 @@ export default function App() {
       )}
 
       <DismissNoteModal
-        isOpen={!!dismissFinding}
-        onClose={() => setDismissFinding(null)}
+        isOpen={Boolean(dismissFinding)}
+        onClose={() => {
+          setDismissFinding(null);
+          setDismissAction(null);
+        }}
         finding={dismissFinding}
         onConfirmDismiss={handleConfirmDismiss}
       />
@@ -337,8 +415,12 @@ export default function App() {
       <DatabaseStatusModal
         isOpen={isDbStatusOpen}
         onClose={() => setIsDbStatusOpen(false)}
-        isOfflineMode={isOfflineMode}
-        onToggleOffline={handleToggleOffline}
+        connected={connected}
+        database={workspace?.database || 'Unknown'}
+        error={connectionError}
+        lastUpdated={lastSync}
+        counts={recordCounts}
+        onRetry={() => void refreshWorkspace()}
       />
 
       <PlannedFeatureModal

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Brand } from '../../data/mockData.js';
 import { CampaignPreset } from '../../utils/rulesEngine.js';
 
@@ -6,81 +6,96 @@ interface UploadCreativeModalProps {
   isOpen: boolean;
   onClose: () => void;
   brands: Brand[];
-  activeBrand: Brand;
-  onAddCampaign: (newCampaign: CampaignPreset) => void;
+  activeBrand?: Brand;
+  onAddCampaign: (newCampaign: CampaignPreset) => Promise<void> | void;
 }
 
-export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
-  isOpen,
-  onClose,
-  brands,
-  activeBrand,
-  onAddCampaign
-}) => {
+export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({ isOpen, onClose, brands, activeBrand, onAddCampaign }) => {
   const [title, setTitle] = useState('');
-  const [selectedBrandId, setSelectedBrandId] = useState(activeBrand.id);
-  const [channel, setChannel] = useState('IG / TikTok Reels (9:16)');
-  const [format, setFormat] = useState('Short-Form Video Ad');
-  const [caption, setCaption] = useState('Fresh organic selections made for your healthy lifestyle! 100% pure quality. #CleanNutrition');
-  const [previewUrl, setPreviewUrl] = useState<string>('/assets/aistudio/screen_81b71146.png');
-  const [isScanning, setIsScanning] = useState(false);
+  const [selectedBrandId, setSelectedBrandId] = useState(activeBrand?.id || brands[0]?.id || '');
+  const [channel, setChannel] = useState('Social media');
+  const [format, setFormat] = useState('Image');
+  const [caption, setCaption] = useState('');
+  const [artworkText, setArtworkText] = useState('');
+  const [imageData, setImageData] = useState('');
+  const [imageName, setImageName] = useState('');
+  const [error, setError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) setSelectedBrandId(activeBrand?.id || brands[0]?.id || '');
+  }, [isOpen, activeBrand?.id, brands]);
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
-      if (!title) {
-        setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
-      }
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('Choose a PNG, JPG, or WebP image.');
+      return;
     }
+    if (file.size > 1200 * 1024) {
+      setError('Image is too large for this database upload. Choose a file under 1.2 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setError('Could not read this image. Try another file.');
+        return;
+      }
+      setImageData(reader.result);
+      setImageName(file.name);
+      setError('');
+      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
+    };
+    reader.onerror = () => setError('Could not read this image. Try another file.');
+    reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsScanning(true);
-
-    setTimeout(() => {
-      const brand = brands.find((b) => b.id === selectedBrandId) || activeBrand;
-      const campaignCode = `CAMPAIGN-${Math.floor(1000 + Math.random() * 9000)}`;
-      
-      const newPreset: CampaignPreset = {
-        id: `custom-${Date.now()}`,
-        code: campaignCode,
-        title: title.trim() || 'Untitled Campaign Asset',
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const brand = brands.find((item) => item.id === selectedBrandId);
+    if (!brand || !imageData || !title.trim()) {
+      setError(!brand ? 'Add a brand record to MongoDB before uploading.' : !imageData ? 'Select an image file first.' : 'Enter a campaign name.');
+      return;
+    }
+    setIsSaving(true);
+    setError('');
+    try {
+      const now = new Date().toISOString();
+      const campaign: CampaignPreset = {
+        id: `campaign-${Date.now()}`,
+        code: `CAM-${Date.now().toString().slice(-6)}`,
+        title: title.trim(),
         brandId: brand.id,
         brandName: brand.name,
         channel,
         format,
-        aspectRatio: '4/5',
-        imageUrl: previewUrl,
-        caption,
-        ocrText: 'RAW ORGANIC COLD PRESSED 100% PURE INGREDIENTS SHOP NOW AT OUR STORES',
-        ocrConfidence: 97.5,
+        aspectRatio: 'original',
+        imageUrl: imageData,
+        caption: caption.trim(),
+        ocrText: artworkText.trim(),
+        ocrConfidence: 0,
+        initialFindings: [],
         status: 'action_required',
-        initialFindings: [
-          {
-            id: `f-${Date.now()}-1`,
-            ruleId: 'FB-012',
-            ruleTitle: 'Health Claim Verification',
-            matchedText: '100% pure',
-            severity: 'warning',
-            source: 'both',
-            ruleSource: 'FDA/FTC Advertising Compliance Framework',
-            explanation: 'Substantiation record required for absolute purity declarations.',
-            suggestedCorrection: 'High Quality Verified Ingredients',
-            status: 'open',
-            bbox: { top: 45.0, left: 35.0, width: 30.0, height: 8.0 }
-          }
-        ]
+        isDemo: false,
+        referenceOnly: false,
+        createdAt: now,
+        updatedAt: now
       };
-
-      onAddCampaign(newPreset);
-      setIsScanning(false);
-      onClose();
-    }, 900);
+      await onAddCampaign(campaign);
+      setTitle('');
+      setCaption('');
+      setArtworkText('');
+      setImageData('');
+      setImageName('');
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Could not save this campaign.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -90,142 +105,68 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-secondary text-[22px]">add_photo_alternate</span>
             <div>
-              <h3 className="font-serif text-lg font-medium text-on-surface">Upload Campaign Creative</h3>
-              <span className="text-xs text-on-surface-variant">
-                Upload image proof and run automated OCR compliance check
-              </span>
+              <h3 className="font-serif text-lg font-medium text-on-surface">Add campaign image</h3>
+              <span className="text-xs text-on-surface-variant">The image and entered text are saved in MongoDB.</span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface"
-          >
+          <button type="button" onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface">
             <span className="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
-          {/* File Upload Zone */}
+        <form onSubmit={(event) => void handleSubmit(event)} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
           <div>
-            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1.5">
-              Creative Asset Artwork
-            </label>
-            <div className="border-2 border-dashed border-surface-container-highest rounded-xl p-4 text-center hover:bg-surface-container-low transition-colors relative flex flex-col items-center justify-center">
-              {previewUrl ? (
+            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1.5">Image</label>
+            <div className="border-2 border-dashed border-surface-container-highest rounded-xl p-4 text-center relative flex flex-col items-center justify-center">
+              {imageData ? (
                 <div className="w-full h-36 rounded-lg overflow-hidden relative bg-surface-container-high mb-2">
-                  <img src={previewUrl} alt="Upload preview" className="w-full h-full object-cover" />
-                  <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-inverse-surface/80 text-inverse-on-surface text-[10px] font-mono">
-                    Ready for OCR
-                  </span>
+                  <img src={imageData} alt="Campaign preview" className="w-full h-full object-contain" />
+                  <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-inverse-surface/80 text-inverse-on-surface text-[10px]">{imageName}</span>
                 </div>
               ) : (
-                <div className="py-6 flex flex-col items-center">
+                <div className="py-5 flex flex-col items-center">
                   <span className="material-symbols-outlined text-outline text-[32px] mb-1">cloud_upload</span>
-                  <p className="text-xs text-on-surface font-medium">Drag and drop file here, or browse</p>
-                  <p className="text-[11px] text-outline mt-0.5">PNG, JPG, WebP up to 25MB</p>
+                  <p className="text-xs text-on-surface font-medium">Choose a campaign image</p>
+                  <p className="text-[11px] text-outline mt-0.5">PNG, JPG, or WebP · up to 1.2 MB</p>
                 </div>
               )}
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer"
-              />
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" aria-label="Choose image file" />
             </div>
           </div>
 
-          {/* Campaign Title */}
           <div>
-            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-              Campaign Name
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Summer Spark Energy Launch"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest"
-            />
+            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">Campaign name</label>
+            <input type="text" required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Spring product launch" className="w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary" />
           </div>
 
-          {/* Brand & Channel Grid */}
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-                Brand
-              </label>
-              <select
-                value={selectedBrandId}
-                onChange={(e) => setSelectedBrandId(e.target.value)}
-                className="w-full px-2.5 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
+            <label className="text-xs font-semibold text-on-surface-variant">Brand
+              <select required value={selectedBrandId} onChange={(event) => setSelectedBrandId(event.target.value)} className="mt-1 w-full px-2.5 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface">
+                {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-                Distribution Channel
-              </label>
-              <select
-                value={channel}
-                onChange={(e) => {
-                  setChannel(e.target.value);
-                  setFormat(e.target.value.includes('Reels') ? 'Short-Form Video (9:16)' : 'Display Banner');
-                }}
-                className="w-full px-2.5 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                <option value="IG / TikTok Reels (9:16)">IG / TikTok Reels (9:16)</option>
-                <option value="Paid Social & Display Banner">Paid Social & Display</option>
-                <option value="Print & Packaging">Print & Packaging</option>
-                <option value="Point of Sale Retail Banner">Retail POP Poster</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Ad Caption Copy */}
-          <div>
-            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-              Initial Ad Caption Copy
             </label>
-            <textarea
-              rows={3}
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary"
-            />
+            <label className="text-xs font-semibold text-on-surface-variant">Channel
+              <select value={channel} onChange={(event) => setChannel(event.target.value)} className="mt-1 w-full px-2.5 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface">
+                <option>Social media</option><option>Paid display</option><option>Print</option><option>Packaging</option><option>Website</option>
+              </select>
+            </label>
           </div>
 
-          <div className="px-5 py-3.5 -mx-5 -mb-5 bg-surface-container-low border-t border-surface-container-high flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isScanning}
-              className="px-3 py-1.5 rounded text-xs font-medium text-on-surface-variant hover:text-on-surface"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isScanning}
-              className="px-4 py-2 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all flex items-center gap-1.5 shadow-sm"
-            >
-              {isScanning ? (
-                <>
-                  <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
-                  Scanning OCR...
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-[16px]">document_scanner</span>
-                  Upload & Run Audit
-                </>
-              )}
+          <label className="block text-xs font-semibold text-on-surface-variant">Format
+            <input value={format} onChange={(event) => setFormat(event.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface" />
+          </label>
+          <label className="block text-xs font-semibold text-on-surface-variant">Caption or body copy
+            <textarea rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Paste the campaign copy to check…" className="mt-1 w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface" />
+          </label>
+          <label className="block text-xs font-semibold text-on-surface-variant">Text shown in the image
+            <textarea rows={3} value={artworkText} onChange={(event) => setArtworkText(event.target.value)} placeholder="Type or paste text from the image. Automatic OCR is not available yet." className="mt-1 w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface" />
+          </label>
+
+          {error && <p role="alert" className="text-xs text-error bg-error-container/50 border border-error-container rounded-lg p-2.5">{error}</p>}
+          <div className="-mx-5 -mb-5 px-5 py-3.5 bg-surface-container-low border-t border-surface-container-high flex items-center justify-end gap-2">
+            <button type="button" onClick={onClose} disabled={isSaving} className="px-3 py-1.5 rounded text-xs font-medium text-on-surface-variant">Cancel</button>
+            <button type="submit" disabled={isSaving || !brands.length} className="px-4 py-2 rounded bg-primary text-on-primary text-xs font-semibold disabled:opacity-60 flex items-center gap-1.5">
+              {isSaving ? <><span className="material-symbols-outlined text-[16px] animate-spin">sync</span>Saving…</> : <><span className="material-symbols-outlined text-[16px]">save</span>Save campaign</>}
             </button>
           </div>
         </form>

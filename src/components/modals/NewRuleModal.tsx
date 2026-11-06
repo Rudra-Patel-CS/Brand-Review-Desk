@@ -227,7 +227,7 @@ export const NewRuleModal: React.FC<NewRuleModalProps> = ({
 
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-              Suggested Pre-Approved Alternative Remedy
+              Suggested correction text
             </label>
             <input
               type="text"

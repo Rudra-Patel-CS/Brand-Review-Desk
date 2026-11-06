@@ -7,6 +7,7 @@ export interface Brand {
   rulebookVersion: string;
   activeRulesCount: number;
   approvedClaimsCount: number;
+  isDemo?: boolean;
 }
 
 export const BRANDS: Brand[] = [

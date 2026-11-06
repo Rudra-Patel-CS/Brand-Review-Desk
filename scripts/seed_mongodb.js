@@ -249,60 +249,41 @@ const reviews = [
 async function seed() {
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
   try {
-    console.log(`Connecting to MongoDB Atlas at: ${uri.replace(/:[^:]*@/, ':***@')}...`);
+    console.log('Connecting to MongoDB Atlas...');
     await client.connect();
     console.log(`Connected to database "${dbName}"`);
     const db = client.db(dbName);
 
-    // 1. Brands table
-    console.log("Creating / updating 'brands' table...");
-    await db.collection('brands').deleteMany({});
-    await db.collection('brands').insertMany(brands);
-    console.log(`✓ Seeded ${brands.length} records into 'brands' collection.`);
+    // Sample documents are insert-only so rerunning this command never wipes user data.
+    const upsertInsertOnly = async (collectionName, documents, keyFor) => {
+      const collection = db.collection(collectionName);
+      for (const document of documents) {
+        const sample = { ...document, isDemo: true };
+        const key = keyFor(document);
+        await collection.updateOne(key, { $setOnInsert: sample }, { upsert: true });
+      }
+      console.log(`✓ Checked ${documents.length} sample record(s) in '${collectionName}'.`);
+    };
 
-    // 2. Rules table
-    console.log("Creating / updating 'rules' table...");
-    await db.collection('rules').deleteMany({});
-    await db.collection('rules').insertMany(rules);
-    console.log(`✓ Seeded ${rules.length} records into 'rules' collection.`);
-
-    // 3. Rulesets table
-    console.log("Creating / updating 'rulesets' table...");
-    await db.collection('rulesets').deleteMany({});
-    await db.collection('rulesets').insertOne({
+    await upsertInsertOnly('brands', brands, (brand) => ({ $or: [{ id: brand.id }, { name: brand.name }] }));
+    const aliases = { freshbites: ['freshbites', 'FreshBites Organic'], arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'], novatech: ['novatech', 'NovaTech Solutions'] };
+    await upsertInsertOnly('rules', rules, (rule) => ({ id: rule.id, brand: { $in: aliases[rule.brand] || [rule.brand] } }));
+    await upsertInsertOnly('rulesets', [{
       brand: 'FreshBites Organic',
       rulesetName: 'Master Rulebook v4.1',
       version: 'v4.1',
-      rules: rules.filter(r => r.brand === 'freshbites'),
+      rules: rules.filter((rule) => rule.brand === 'freshbites'),
       updatedAt: new Date()
-    });
-    console.log("✓ Seeded 'rulesets' collection.");
+    }], (ruleset) => ({ brand: ruleset.brand }));
+    await upsertInsertOnly('campaigns', campaigns, (campaign) => ({ id: campaign.id }));
+    await upsertInsertOnly('drafts', campaigns, (campaign) => ({ id: campaign.id }));
+    await upsertInsertOnly('reviews', reviews, (review) => ({ $or: [{ id: review.id }, { reviewId: review.reviewId }] }));
 
-    // 4. Campaigns / Drafts table
-    console.log("Creating / updating 'campaigns' table...");
-    await db.collection('campaigns').deleteMany({});
-    await db.collection('campaigns').insertMany(campaigns);
-    console.log(`✓ Seeded ${campaigns.length} records into 'campaigns' collection.`);
-
-    // Also mirror to 'drafts'
-    await db.collection('drafts').deleteMany({});
-    await db.collection('drafts').insertMany(campaigns);
-    console.log("✓ Mirrored into 'drafts' collection.");
-
-    // 5. Reviews table (Audit ledger)
-    console.log("Creating / updating 'reviews' table...");
-    await db.collection('reviews').deleteMany({});
-    await db.collection('reviews').insertMany(reviews);
-    console.log(`✓ Seeded ${reviews.length} records into 'reviews' collection.`);
-
-    // 6. Audit logs table
-    console.log("Creating / updating 'audit_logs' table...");
-    await db.collection('audit_logs').insertOne({
-      event: 'SYSTEM_DATABASE_INITIALIZED',
-      timestamp: new Date(),
-      details: 'All required compliance tables and seeds populated.'
-    });
-    console.log("✓ Logged initial entry to 'audit_logs' collection.");
+    await db.collection('audit_logs').updateOne(
+      { event: 'SAMPLE_DATA_CHECKED' },
+      { $setOnInsert: { event: 'SAMPLE_DATA_CHECKED', timestamp: new Date(), isDemo: true } },
+      { upsert: true }
+    );
 
     // Verification
     const collections = await db.listCollections().toArray();
@@ -316,7 +297,7 @@ async function seed() {
     console.error("Seed error:", err.message);
   } finally {
     await client.close();
-    console.log("\nMongoDB connection closed. All tables successfully verified!");
+    console.log("\nMongoDB connection closed. Sample records were checked without deleting existing data.");
   }
 }
 

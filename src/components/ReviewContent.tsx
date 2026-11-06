@@ -15,11 +15,13 @@ interface ReviewContentProps {
   activeCampaign: CampaignPreset;
   onSelectCampaign: (campaign: CampaignPreset) => void;
   rules: BrandRule[];
+  onSaveCampaign: (campaign: CampaignPreset) => Promise<void>;
   onOpenUpload: () => void;
-  onOpenOcrText: (ocrText: string, confidence: number) => void;
+  onOpenOcrText: (ocrText: string, onSave: (text: string) => Promise<void>) => void;
   onOpenApproveModal: (campaign: CampaignPreset, caption: string, findings: ComplianceFinding[]) => void;
-  onOpenDismissModal: (finding: ComplianceFinding) => void;
+  onOpenDismissModal: (finding: ComplianceFinding, applyDecision: (note: string) => void) => void;
   onOpenPlannedModal: (title: string) => void;
+  onShowToast: (message: string) => void;
 }
 
 export const ReviewContent: React.FC<ReviewContentProps> = ({
@@ -28,60 +30,90 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   activeCampaign,
   onSelectCampaign,
   rules,
+  onSaveCampaign,
   onOpenUpload,
   onOpenOcrText,
   onOpenApproveModal,
   onOpenDismissModal,
-  onOpenPlannedModal
+  onOpenPlannedModal,
+  onShowToast
 }) => {
   const [currentCaption, setCurrentCaption] = useState(activeCampaign.caption);
   const [currentOcrText, setCurrentOcrText] = useState(activeCampaign.ocrText);
   const [findings, setFindings] = useState<ComplianceFinding[]>(activeCampaign.initialFindings);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [autosaveStatus, setAutosaveStatus] = useState('Autosaved just now');
+  const [autosaveStatus, setAutosaveStatus] = useState('Loaded from database');
+  const [hasRunAudit, setHasRunAudit] = useState(Boolean(activeCampaign.auditAt || activeCampaign.initialFindings.length));
   const [zoomLevel, setZoomLevel] = useState<1 | 1.25 | 1.5>(1);
 
   const findingRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
-  // Sync state when active campaign changes
+  // Sync the editor only when a different saved campaign version arrives.
   useEffect(() => {
     setCurrentCaption(activeCampaign.caption);
     setCurrentOcrText(activeCampaign.ocrText);
     setFindings(activeCampaign.initialFindings);
     setSelectedFindingId(null);
-  }, [activeCampaign]);
+    setHasRunAudit(Boolean(activeCampaign.auditAt || activeCampaign.initialFindings.length));
+    setAutosaveStatus('Loaded from database');
+  }, [activeCampaign.id, activeCampaign.updatedAt]);
 
   // Re-run compliance calculations
   const compliance = calculateComplianceScore(findings);
+  const applicableRuleCount = rules.filter((rule) => rule.enabled && (rule.brand === activeBrand.id || rule.brand === 'global')).length;
 
   // Handle caption edits
   const handleCaptionChange = (newCaption: string) => {
     setCurrentCaption(newCaption);
-    setAutosaveStatus('Saving draft...');
-    const timeout = setTimeout(() => {
-      setAutosaveStatus('Draft autosaved');
-    }, 600);
-    return () => clearTimeout(timeout);
+    setHasRunAudit(false);
+    setAutosaveStatus('Unsaved changes');
   };
 
   // Re-audit compliance
   const handleReaudit = () => {
     setIsScanning(true);
-    setTimeout(() => {
-      const detected = runComplianceAudit(currentCaption, currentOcrText, rules, activeBrand.id);
-      // Preserve existing applied/dismissed findings if they still match rule
-      const updatedFindings = detected.map((df) => {
-        const existing = findings.find((f) => f.ruleId === df.ruleId);
-        if (existing && existing.status !== 'open') {
-          return { ...df, status: existing.status, dismissNote: existing.dismissNote };
-        }
-        return df;
-      });
-      setFindings(updatedFindings);
+    const detected = runComplianceAudit(currentCaption, currentOcrText, rules, activeBrand.id);
+    const updatedFindings = detected.map((finding) => {
+      const existing = findings.find((saved) => saved.ruleId === finding.ruleId && saved.matchedText.toLowerCase() === finding.matchedText.toLowerCase());
+      return existing && existing.status !== 'open'
+        ? { ...finding, status: existing.status, dismissNote: existing.dismissNote }
+        : finding;
+    });
+    setFindings(updatedFindings);
+    setHasRunAudit(true);
+    setIsScanning(false);
+    setAutosaveStatus('Rule check complete • not saved yet');
+  };
+
+  const handleSaveAndValidate = async () => {
+    setIsScanning(true);
+    const detected = runComplianceAudit(currentCaption, currentOcrText, rules, activeBrand.id);
+    const updatedFindings = detected.map((finding) => {
+      const existing = findings.find((saved) => saved.ruleId === finding.ruleId && saved.matchedText.toLowerCase() === finding.matchedText.toLowerCase());
+      return existing && existing.status !== 'open'
+        ? { ...finding, status: existing.status, dismissNote: existing.dismissNote }
+        : finding;
+    });
+    const updatedCampaign: CampaignPreset = {
+      ...activeCampaign,
+      caption: currentCaption,
+      ocrText: currentOcrText,
+      initialFindings: updatedFindings,
+      auditAt: new Date().toISOString(),
+      status: updatedFindings.some((finding) => finding.status === 'open' && finding.severity === 'critical') ? 'action_required' : 'under_review'
+    };
+    setFindings(updatedFindings);
+    setHasRunAudit(true);
+    try {
+      await onSaveCampaign(updatedCampaign);
+      setAutosaveStatus('Saved to database');
+    } catch (error) {
+      setAutosaveStatus('Save failed');
+      onShowToast(`Campaign was not saved: ${error instanceof Error ? error.message : 'database error'}`);
+    } finally {
       setIsScanning(false);
-      setAutosaveStatus('Re-audit complete • 100% matched');
-    }, 650);
+    }
   };
 
   // Handle Apply Suggestion
@@ -100,7 +132,8 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setFindings((prev) =>
       prev.map((f) => (f.id === finding.id ? { ...f, status: 'applied' } : f))
     );
-    setAutosaveStatus(`Applied fix: "${finding.suggestedCorrection}"`);
+    setHasRunAudit(false);
+    setAutosaveStatus('Unsaved decision');
   };
 
   // Handle Undo finding
@@ -108,6 +141,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setFindings((prev) =>
       prev.map((f) => (f.id === findingId ? { ...f, status: 'open', dismissNote: undefined } : f))
     );
+    setAutosaveStatus('Unsaved decision');
   };
 
   // Handle Manual Reviewed override
@@ -115,6 +149,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setFindings((prev) =>
       prev.map((f) => (f.id === findingId ? { ...f, status: 'manual_reviewed' } : f))
     );
+    setAutosaveStatus('Unsaved decision');
   };
 
   // Select finding from click on OCR box
@@ -140,7 +175,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             </span>
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                compliance.criticalOpen > 0
+                !hasRunAudit
+                  ? 'bg-surface-container text-on-surface-variant'
+                  : compliance.criticalOpen > 0
                   ? 'bg-error-container text-on-error-container'
                   : compliance.warningOpen > 0
                   ? 'bg-amber-100 text-amber-900'
@@ -149,20 +186,32 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  compliance.criticalOpen > 0 ? 'bg-error animate-ping' : 'bg-secondary'
+                  !hasRunAudit ? 'bg-outline' : compliance.criticalOpen > 0 ? 'bg-error animate-ping' : 'bg-secondary'
                 }`}
               />
-              {compliance.criticalOpen > 0
-                ? `Action Required (${compliance.criticalOpen} Critical, ${compliance.totalResolved} Cleared)`
+              {!hasRunAudit
+                ? 'Not checked yet'
+                : applicableRuleCount === 0
+                ? 'No enabled rules available'
+                : compliance.criticalOpen > 0
+                ? `Action Required (${compliance.criticalOpen} Critical, ${compliance.totalResolved} Resolved)`
                 : compliance.warningOpen > 0
-                ? `Advisory Clearance (${compliance.warningOpen} Warning, ${compliance.totalResolved} Cleared)`
-                : `All Rules Passed (${compliance.totalResolved} Cleared)`}
+                ? `Review needed (${compliance.warningOpen} Warning, ${compliance.totalResolved} Resolved)`
+                : findings.length === 0
+                ? 'No saved rule matched'
+                : `${findings.length} saved finding(s)`}
             </span>
           </div>
 
           <h1 className="font-serif text-2xl sm:text-3xl text-primary font-medium tracking-tight">
             {activeCampaign.title}
           </h1>
+          {(activeCampaign.isDemo || activeCampaign.referenceOnly) && (
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              {activeCampaign.isDemo && <span className="text-[10px] font-semibold text-amber-950 bg-amber-100 border border-amber-200 px-2 py-1 rounded">Sample record</span>}
+              {activeCampaign.referenceOnly && <span className="text-[10px] font-semibold text-primary bg-primary-fixed/50 border border-primary-container px-2 py-1 rounded">Reference image · not a real brand campaign</span>}
+            </div>
+          )}
         </div>
 
         {/* Quick Campaign Switcher / Presets Strip */}
@@ -188,7 +237,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                     {c.title}
                   </span>
                   <span className="text-[10px] font-mono text-on-surface-variant truncate">
-                    {c.brandName}
+                    {c.referenceOnly ? 'Image reference' : c.brandName}
                   </span>
                 </div>
               </button>
@@ -257,9 +306,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   </button>
                 </div>
 
-                <span className="px-2 py-0.5 rounded bg-surface-container font-mono text-[11px] text-on-surface-variant">
-                  OCR: {activeCampaign.ocrConfidence}%
-                </span>
+                {hasRunAudit && <span className="px-2 py-0.5 rounded bg-surface-container font-mono text-[11px] text-on-surface-variant">Rule check saved</span>}
               </div>
             </div>
 
@@ -275,12 +322,12 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   className="w-auto h-auto max-h-[540px] max-w-full rounded-lg object-contain shadow-2xl"
                 />
 
-                {/* Simulated OCR scanning scanline when re-scanning */}
+                {/* Rule check progress */}
                 {isScanning && (
                   <div className="absolute inset-0 bg-primary/20 backdrop-blur-[1px] animate-pulse flex items-center justify-center">
                     <div className="bg-inverse-surface/90 text-inverse-on-surface px-4 py-2 rounded-xl shadow-xl flex items-center gap-2 font-mono text-xs">
                       <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
-                      Scanning OCR Coordinates & Brand Rules...
+                      Checking the entered text against saved rules…
                     </div>
                   </div>
                 )}
@@ -341,7 +388,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   <span className="material-symbols-outlined text-[15px] text-secondary-fixed">
                     center_focus_strong
                   </span>
-                  <span>{findings.filter((f) => f.bbox).length} OCR Markers Active</span>
+                    <span>{findings.filter((f) => f.bbox).length} saved image annotations</span>
                 </div>
               </div>
             </div>
@@ -358,7 +405,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   <span className={`material-symbols-outlined text-[16px] ${isScanning ? 'animate-spin' : ''}`}>
                     sync
                   </span>
-                  Re-scan OCR
+                  Check text against rules
                 </button>
                 <button
                   type="button"
@@ -372,14 +419,43 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
 
               <button
                 type="button"
-                onClick={() => onOpenOcrText(currentOcrText, activeCampaign.ocrConfidence)}
+                onClick={() => onOpenOcrText(currentOcrText, async (text) => {
+                  const updatedCampaign: CampaignPreset = {
+                    ...activeCampaign,
+                    caption: currentCaption,
+                    ocrText: text,
+                    initialFindings: [],
+                    auditAt: '',
+                    status: 'action_required'
+                  };
+                  await onSaveCampaign(updatedCampaign);
+                  setCurrentOcrText(text);
+                  setFindings([]);
+                  setHasRunAudit(false);
+                  setAutosaveStatus('Saved artwork text · run rules again');
+                })}
                 className="flex items-center gap-1 text-xs font-mono text-secondary hover:text-primary font-semibold py-1 px-2 rounded hover:bg-surface-container transition-colors"
               >
                 <span className="material-symbols-outlined text-[16px]">text_fields</span>
-                View Extracted OCR Text ({currentOcrText.split(/\s+/).length} words)
+                Edit artwork text ({currentOcrText.trim() ? currentOcrText.trim().split(/\s+/).length : 0} words)
               </button>
             </div>
           </div>
+
+          {(activeCampaign.sourceUrl || activeCampaign.licenseName || activeCampaign.attribution) && (
+            <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-surface-container-high text-xs space-y-1">
+              <div className="font-semibold text-on-surface">Image source and license</div>
+              <div className="text-on-surface-variant">
+                {activeCampaign.sourceName || 'Source'}{activeCampaign.attribution ? ` · ${activeCampaign.attribution}` : ''}
+                {activeCampaign.licenseName ? ` · ${activeCampaign.licenseName}` : ''}
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                {activeCampaign.sourceUrl && <a href={activeCampaign.sourceUrl} target="_blank" rel="noreferrer" className="text-primary underline">Open image source</a>}
+                {activeCampaign.licenseUrl && <a href={activeCampaign.licenseUrl} target="_blank" rel="noreferrer" className="text-primary underline">Read license</a>}
+              </div>
+              {activeCampaign.sourceDescription && <p className="text-[11px] text-on-surface-variant">{activeCampaign.sourceDescription}</p>}
+            </div>
+          )}
 
           {/* 3. Caption & Copy Editor */}
           <div className="bg-surface-container-lowest p-5 rounded-2xl border border-surface-container-high shadow-md space-y-3">
@@ -410,7 +486,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             <div className="p-3 rounded-xl bg-surface-container-low border border-surface-container-high space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-on-surface-variant uppercase tracking-wider text-[10px]">
-                  Live Token Lexical Parsing:
+                  Matches from saved brand rules:
                 </span>
                 <button
                   type="button"
@@ -426,7 +502,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 {findings.length === 0 ? (
                   <span className="text-secondary flex items-center gap-1 font-sans">
                     <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                    All clear! No restricted phrases detected in current draft.
+                    {hasRunAudit ? 'No enabled database rule matched the current text.' : 'Run a rule check to evaluate this text.'}
                   </span>
                 ) : (
                   findings.map((f) => {
@@ -453,20 +529,26 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   })
                 )}
               </div>
+              {!hasRunAudit && findings.length > 0 && (
+                <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                  These findings came from the last saved check. Recheck after changing the caption or artwork text.
+                </p>
+              )}
             </div>
 
             {/* Caption Draft Footer */}
             <div className="flex items-center justify-between pt-1 text-xs">
-              <span className="text-on-surface-variant flex items-center gap-1 font-mono text-[11px]">
-                <span className="material-symbols-outlined text-[14px] text-secondary">cloud_done</span>
+                <span className="text-on-surface-variant flex items-center gap-1 font-mono text-[11px]">
+                <span className="material-symbols-outlined text-[14px] text-secondary">{autosaveStatus === 'Saved to database' || autosaveStatus === 'Loaded from database' ? 'cloud_done' : 'edit_note'}</span>
                 {autosaveStatus}
               </span>
               <button
                 type="button"
-                onClick={handleReaudit}
+                onClick={() => void handleSaveAndValidate()}
+                disabled={isScanning}
                 className="px-3 py-1.5 rounded-lg bg-secondary text-on-secondary font-semibold hover:bg-secondary-fixed transition-colors shadow-xs"
               >
-                Save & Validate Copy
+                {isScanning ? 'Checking and saving…' : 'Save & Check Rules'}
               </button>
             </div>
           </div>
@@ -492,7 +574,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
               <span className="font-mono text-xs uppercase tracking-wider font-bold">
                 {compliance.totalResolved} Cleared
               </span>
-              <span className="text-[11px] opacity-85">Verified OK</span>
+              <span className="text-[11px] opacity-85">Findings resolved</span>
             </div>
           </div>
 
@@ -505,7 +587,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
               </span>
             </div>
             <span className="text-xs text-on-surface-variant font-mono">
-              Score: <strong className="text-primary font-bold">{compliance.score}%</strong>
+              Enabled rules: <strong className="text-primary font-bold">{applicableRuleCount}</strong>
             </span>
           </div>
 
@@ -590,10 +672,10 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                     <div className="mt-2.5 p-2.5 rounded-lg bg-secondary-container/30 border border-secondary-fixed-dim/50 space-y-1">
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="font-semibold text-secondary uppercase tracking-wider">
-                          Suggested Compliant Correction:
+                          Suggested Correction:
                         </span>
                         <span className="font-mono text-[10px] text-secondary font-bold">
-                          Pre-Approved
+                          From saved rule
                         </span>
                       </div>
                       <div className="font-serif text-xs text-on-surface italic font-medium">
@@ -605,7 +687,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   {/* Dismissed note if present */}
                   {finding.dismissNote && (
                     <div className="mt-2 p-2 rounded bg-surface-container-high border border-surface-container-highest text-[11px] text-on-surface-variant">
-                      <strong className="text-on-surface">Counsel Waiver Note:</strong> {finding.dismissNote}
+                      <strong className="text-on-surface">Review note:</strong> {finding.dismissNote}
                     </div>
                   )}
 
@@ -625,7 +707,10 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                         )}
                         <button
                           type="button"
-                          onClick={() => onOpenDismissModal(finding)}
+                          onClick={() => onOpenDismissModal(finding, (note) => {
+                            setFindings((previous) => previous.map((item) => item.id === finding.id ? { ...item, status: 'dismissed', dismissNote: note } : item));
+                            setAutosaveStatus('Unsaved decision');
+                          })}
                           className="px-2.5 py-1.5 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface text-xs font-medium border border-surface-container-high transition-colors"
                         >
                           Dismiss w/ Note
@@ -642,7 +727,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                       <div className="w-full flex items-center justify-between">
                         <span className="text-xs text-secondary font-semibold flex items-center gap-1">
                           <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                          Decision Recorded
+                          Decision set · save to keep
                         </span>
                         <button
                           type="button"
@@ -677,7 +762,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                Multi-counsel approvals and TikTok UI overlap safe-zone checks are scheduled for next platform release. Click to learn more.
+                A planned feature only. It is not available or used in the current review flow.
               </p>
             </div>
           </div>
@@ -687,34 +772,36 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             <div className="flex items-center justify-between text-xs px-1">
               <span
                 className={`font-semibold flex items-center gap-1 ${
-                  compliance.criticalOpen > 0 ? 'text-error' : 'text-secondary'
+                  compliance.criticalOpen > 0 ? 'text-error' : 'text-on-surface-variant'
                 }`}
               >
                 <span className="material-symbols-outlined text-[16px]">
-                  {compliance.criticalOpen > 0 ? 'lock' : 'lock_open'}
+                  {compliance.criticalOpen > 0 ? 'warning' : 'fact_check'}
                 </span>
-                {compliance.criticalOpen > 0
-                  ? `Resolve ${compliance.criticalOpen} Critical Issue(s) to Authorize`
-                  : 'All Critical Blocks Cleared'}
+                {applicableRuleCount === 0
+                  ? 'No enabled database rules are available for this brand'
+                  : compliance.criticalOpen > 0
+                    ? `${compliance.criticalOpen} critical finding(s) still open`
+                    : 'Review record will reflect the findings above'}
               </span>
               <span className="font-mono text-[11px] text-on-surface-variant">
-                Gatekeeper: Legal Counsel
+                {hasRunAudit ? 'Rule check has been run' : 'Run a rule check before filing'}
               </span>
             </div>
 
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={compliance.criticalOpen > 0}
+                disabled={!hasRunAudit || applicableRuleCount === 0}
                 onClick={() => onOpenApproveModal(activeCampaign, currentCaption, findings)}
                 className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${
-                  compliance.criticalOpen > 0
+                  !hasRunAudit || applicableRuleCount === 0
                     ? 'bg-surface-container text-on-surface-variant/60 cursor-not-allowed border border-surface-container-high'
                     : 'bg-primary text-on-primary hover:bg-primary-container cursor-pointer'
                 }`}
               >
-                <span className="material-symbols-outlined text-[18px]">verified_user</span>
-                <span>Approve & Export Review Pack</span>
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                <span>Save Review Record</span>
               </button>
             </div>
           </div>

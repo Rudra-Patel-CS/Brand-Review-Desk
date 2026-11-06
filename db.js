@@ -23,6 +23,7 @@ const defaultRuleset = {
   version: "v3.2",
   note: "Official brand compliance ruleset governing advertising claims, tone of voice, terminology, and legal requirements.",
   isDefault: true,
+  isDemo: true,
   approvedFacts: [
     {
       id: "FACT-04",
@@ -182,6 +183,22 @@ const defaultBrands = [
 ];
 
 // In-memory fallback
+
+// ---------- USER COLLECTION ----------
+async function createUser(username, passwordHash) {
+  const usersColl = db.collection('users');
+  return await usersColl.insertOne({ username, passwordHash });
+}
+async function findUser(username) {
+  const usersColl = db.collection('users');
+  return await usersColl.findOne({ username });
+}
+
+// Export user helpers
+module.exports.createUser = createUser;
+module.exports.findUser = findUser;
+
+// Existing in-memory fallback continues below
 const memoryStore = {
   rulesets: [JSON.parse(JSON.stringify(defaultRuleset))],
   brands: JSON.parse(JSON.stringify(defaultBrands)),
@@ -294,7 +311,7 @@ async function initDatabaseTables(database) {
         rulesetName: defaultRuleset.rulesetName,
         createdAt: new Date()
       }));
-      await database.collection('rules').insertMany(normalizedRules);
+      await database.collection('rules').insertMany(normalizedRules.map(rule => ({ ...rule, isDemo: true })));
     }
 
     // 3. Table: brands
@@ -303,7 +320,7 @@ async function initDatabaseTables(database) {
     }
     const brandCount = await database.collection('brands').countDocuments();
     if (brandCount === 0) {
-      await database.collection('brands').insertMany(defaultBrands);
+      await database.collection('brands').insertMany(defaultBrands.map(brand => ({ ...brand, isDemo: true })));
     }
 
     // 4. Table: drafts
@@ -317,7 +334,7 @@ async function initDatabaseTables(database) {
     }
     const reviewCount = await database.collection('reviews').countDocuments();
     if (reviewCount === 0 && memoryStore.reviews.length > 0) {
-      await database.collection('reviews').insertMany(memoryStore.reviews);
+      await database.collection('reviews').insertMany(memoryStore.reviews.map(review => ({ ...review, isDemo: true })));
     }
 
     // 6. Table: audit_logs
@@ -502,6 +519,231 @@ async function getBrands() {
   return memoryStore.brands;
 }
 
+function normalizeBrand(record) {
+  const { _id, ...plainRecord } = record;
+  const name = record.name || record.brandName || record.brand || 'Unknown brand';
+  const rawId = String(record.id || record.brandId || name)
+    .toLowerCase()
+    .replace(/\s*\(demo\)/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const normalizedId = rawId.includes('freshbites') ? 'freshbites'
+    : rawId.includes('arka') ? 'arka'
+      : rawId.includes('novatech') ? 'novatech'
+        : rawId;
+  return {
+    ...plainRecord,
+    id: normalizedId,
+    name,
+    category: record.category || record.industry || '',
+    rulebookVersion: record.rulebookVersion || record.rulesetName || 'Unversioned',
+    activeRulesCount: record.activeRulesCount || record.rulesCount || 0,
+    approvedClaimsCount: record.approvedClaimsCount || 0,
+    isDemo: Boolean(
+      record.isDemo ||
+      name.includes('(demo)') ||
+      record.approvedClaimsCount > 0 ||
+      /Master Rulebook v4\.1|Quality Codex v2\.8|Commercial Compliance v3\.0/.test(record.rulebookVersion || '') ||
+      (name === 'FreshBites Organic' && record.industry === 'Health Beverages & Superfoods') ||
+      (name === 'NovaTech Solutions' && record.industry === 'Enterprise Cloud & AI')
+    )
+  };
+}
+
+const sampleRuleIds = new Set(['FB-012', 'FB-004', 'FB-028', 'FB-019', 'FB-031', 'AF-001', 'AF-014', 'AF-022', 'NT-001', 'NT-008', 'NT-015', 'FACT-01', 'TONE-04', 'TERM-02', 'LEGAL-01', 'LEGAL-02', 'PRICE-01', 'TECH-01', 'COMP-01', 'HEALTH-01']);
+
+function normalizeWorkspaceRule(record) {
+  const { _id, ...plainRecord } = record;
+  const escapePattern = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = record.pattern || (Array.isArray(record.patterns)
+    ? record.patterns.map(value => record.regex ? String(value) : escapePattern(value)).join('|')
+    : '');
+  const source = typeof record.source === 'string'
+    ? record.source
+    : record.source?.doc || record.source?.quote || '';
+  const rawSeverity = String(record.severity || 'advisory').toLowerCase();
+  const severity = ['critical', 'high'].includes(rawSeverity) ? 'critical'
+    : ['warning', 'medium', 'moderate'].includes(rawSeverity) ? 'warning'
+      : 'advisory';
+  const rawCategory = String(record.category || '').toLowerCase();
+  const category = /health|claim|nutrition/.test(rawCategory) ? 'health'
+    : /trademark|brand|logo/.test(rawCategory) ? 'trademark'
+      : /disclaimer|legal|allergen|sla/.test(rawCategory) ? 'disclaimers'
+        : /pricing|offer|promo|competitive/.test(rawCategory) ? 'pricing'
+          : 'general';
+  return {
+    ...plainRecord,
+    id: String(record.id || record.ruleId || ''),
+    brand: normalizeBrand({ name: record.brand || record.brandId || 'global' }).id,
+    title: record.title || record.name || 'Untitled rule',
+    category,
+    severity,
+    pattern,
+    flags: record.flags || (record.regex ? 'i' : ''),
+    source,
+    explanation: record.explanation || record.why || '',
+    suggestedRemedy: record.suggestedRemedy || record.suggestion?.text || record.suggestion || undefined,
+    enabled: record.enabled !== false,
+    appliesTo: record.appliesTo || (record.sourceType === 'caption' ? ['caption'] : record.sourceType === 'creative' ? ['ocr'] : ['caption', 'ocr']),
+    isDemo: Boolean(record.isDemo || String(record.brand || '').includes('(demo)') || sampleRuleIds.has(String(record.id || record.ruleId || '')))
+  };
+}
+
+function normalizeWorkspaceCampaign(record) {
+  const { _id, ...plainRecord } = record;
+  const imageUrl = String(record.imageUrl || record.image || '');
+  return {
+    ...plainRecord,
+    id: String(record.id || record.campaignId || record._id || ''),
+    code: record.code || record.campaignCode || String(record.id || 'REFERENCE'),
+    title: record.title || record.name || record.contentName || 'Untitled campaign',
+    brandId: normalizeBrand({ name: record.brandId || record.brandName || record.brand || 'global' }).id,
+    brandName: record.brandName || record.brand || 'Unassigned',
+    channel: record.channel || 'Unspecified',
+    format: record.format || 'Image',
+    aspectRatio: record.aspectRatio || '4/3',
+    imageUrl: imageUrl.replace(/^\/assets\/screen_/, '/assets/aistudio/screen_'),
+    caption: record.caption || '',
+    ocrText: record.ocrText || '',
+    ocrConfidence: Number(record.ocrConfidence || 0),
+    initialFindings: Array.isArray(record.initialFindings) ? record.initialFindings : [],
+    status: record.status || 'action_required',
+    sourceName: record.sourceName || '',
+    sourceUrl: record.sourceUrl || '',
+    licenseName: record.licenseName || '',
+    licenseUrl: record.licenseUrl || '',
+    attribution: record.attribution || '',
+    sourceDescription: record.sourceDescription || '',
+    isDemo: Boolean(record.isDemo || String(record.id || '').startsWith('preset-')),
+    referenceOnly: Boolean(record.referenceOnly),
+    updatedAt: record.updatedAt || record.createdAt || null
+  };
+}
+
+function normalizeWorkspaceReview(record) {
+  const { _id, ...plainRecord } = record;
+  if (!record.campaignTitle && record.contentName) {
+    return {
+      ...plainRecord,
+      id: String(record.reviewId || record._id),
+      dossierNumber: String(record.reviewId || record._id),
+      campaignTitle: record.contentName,
+      brandId: normalizeBrand({ name: record.brand || 'global' }).id,
+      brandName: record.brand || 'Unassigned',
+      channel: record.channel || 'Unspecified',
+      reviewedAt: record.formattedDate || record.timestamp || '',
+      reviewerName: record.reviewerName || 'Unassigned reviewer',
+      reviewerRole: record.reviewerRole || '',
+      auditId: record.auditId || '',
+      sha256Hash: '',
+      status: record.status || 'approved',
+      findingsCount: record.findingsCount || record.decisionsCount || 0,
+      clearedCount: record.clearedCount || record.appliedCount || 0,
+      openCount: record.openCount || 0,
+      imageUrl: record.imageUrl || '',
+      findings: record.findings || [],
+      isDemo: Boolean(record.isDemo || record.reviewId === 'REV-20261106-001' || String(record.contentName || '').includes('diwali-poster-v2'))
+    };
+  }
+  return {
+    ...plainRecord,
+    id: String(record.id || record._id || ''),
+    dossierNumber: record.dossierNumber || record.reviewId || String(record.id || record._id || ''),
+    campaignTitle: record.campaignTitle || record.contentName || 'Untitled review',
+    brandId: normalizeBrand({ name: record.brandId || record.brandName || record.brand || 'global' }).id,
+    brandName: record.brandName || record.brand || 'Unassigned',
+    channel: record.channel || 'Unspecified',
+    reviewedAt: record.reviewedAt || record.formattedDate || record.timestamp || '',
+    imageUrl: String(record.imageUrl || ''),
+    reviewerName: record.reviewerName || 'Reviewer not recorded',
+    reviewerRole: record.reviewerRole || '',
+    sha256Hash: record.sha256Hash || '',
+    auditId: record.auditId || '',
+    findings: Array.isArray(record.findings) ? record.findings : [],
+    findingsCount: Number(record.findingsCount || record.decisionsCount || 0),
+    clearedCount: Number(record.clearedCount || record.appliedCount || 0),
+    openCount: Number(record.openCount || 0),
+    status: record.status || 'conditional',
+    isDemo: Boolean(record.isDemo || String(record.id || '').startsWith('rev-2026-'))
+  };
+}
+
+async function getWorkspaceSnapshot() {
+  const database = await connectDB();
+  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
+  const [brandRows, ruleRows, campaignRows, reviewRows] = await Promise.all([
+    database.collection('brands').find({}).toArray(),
+    database.collection('rules').find({}).toArray(),
+    database.collection('campaigns').find({}).sort({ updatedAt: -1, createdAt: -1 }).toArray(),
+    database.collection('reviews').find({}).sort({ timestamp: -1, createdAt: -1 }).limit(500).toArray()
+  ]);
+  const brands = brandRows.map(normalizeBrand);
+  const rules = ruleRows.map(normalizeWorkspaceRule).filter(rule => rule.id && rule.pattern);
+  const campaigns = campaignRows.map(normalizeWorkspaceCampaign);
+  const reviews = reviewRows.map(normalizeWorkspaceReview);
+  return {
+    connected: true,
+    database: DB_NAME,
+    updatedAt: new Date().toISOString(),
+    brands,
+    rules,
+    campaigns,
+    reviews
+  };
+}
+
+async function saveWorkspaceRule(rule) {
+  const database = await connectDB();
+  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
+  const { _id, createdAt, ...ruleFields } = rule;
+  const value = { ...ruleFields, updatedAt: new Date() };
+  const storedBrandNames = {
+    freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
+    arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
+    novatech: ['novatech', 'NovaTech Solutions'],
+    global: ['global']
+  }[rule.brand] || [rule.brand];
+  await database.collection('rules').updateOne(
+    { id: String(rule.id), brand: { $in: storedBrandNames } },
+    { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
+    { upsert: true }
+  );
+  return database.collection('rules').findOne({ id: String(rule.id), brand: rule.brand });
+}
+
+async function deleteWorkspaceRule(id, brand) {
+  const database = await connectDB();
+  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
+  const storedBrandNames = {
+    freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
+    arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
+    novatech: ['novatech', 'NovaTech Solutions'],
+    global: ['global']
+  }[brand] || [brand];
+  return database.collection('rules').deleteOne({ id: String(id), brand: { $in: storedBrandNames } });
+}
+
+async function saveWorkspaceCampaign(campaign) {
+  const database = await connectDB();
+  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
+  const { _id, createdAt, ...campaignFields } = campaign;
+  const value = { ...campaignFields, updatedAt: new Date() };
+  await database.collection('campaigns').updateOne(
+    { id: String(campaign.id) },
+    { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
+    { upsert: true }
+  );
+  return database.collection('campaigns').findOne({ id: String(campaign.id) });
+}
+
+async function addWorkspaceReview(review) {
+  const database = await connectDB();
+  if (!database || !isConnected) throw new Error(lastError || 'MongoDB is not connected');
+  const value = { ...review, id: String(review.id || `review-${Date.now()}`), timestamp: new Date(), createdAt: new Date() };
+  await database.collection('reviews').insertOne(value);
+  return value;
+}
+
 async function getInsights() {
   const reviews = await getReviews(100);
   const ruleset = await getActiveRuleset();
@@ -560,6 +802,11 @@ module.exports = {
   getLatestDraft,
   saveDraft,
   getBrands,
+  getWorkspaceSnapshot,
+  saveWorkspaceRule,
+  deleteWorkspaceRule,
+  saveWorkspaceCampaign,
+  addWorkspaceReview,
   getInsights,
   defaultRuleset
 };
