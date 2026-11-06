@@ -1,84 +1,154 @@
-# Brand Review Desk (MongoDB Edition) - Team 24CS073
+<div align="center">
 
-Check every piece of content against approved brand rules before it goes live.
-Content goes in, it is verified against brand guidelines, terminology, and approved facts, every issue is cited with the exact source rule it breaks, and a human reviewer makes the final decision.
+# Brand Review Desk
 
----
+### A focused workspace for reviewing creative campaigns against brand rules.
 
-## What's New in this Version
+Review campaign copy, inspect compliance findings, manage rulebooks, and keep a local review archive in a responsive React interface.
 
-- **MongoDB Database Integration**:
-  - Replaces manual JSON import/export with direct MongoDB Atlas storage.
-  - Connected to MongoDB cluster `project-1.xzfwn9j.mongodb.net`, database `Brand_Review_Desk`.
-  - Collections ("tables") created and managed:
-    - `rulesets`: Stores comprehensive brand rulebooks and approved facts.
-    - `rules`: Normalized rule documents with pattern indexing and toggling.
-    - `reviews`: Immutable compliance audit trail for every signed-off campaign.
-    - `drafts`: Active and saved content drafts (posters, captions, OCR tokens).
-    - `brands`: Multi-brand profiles and brand-specific rule sets.
-    - `audit_logs`: Granular change log of reviewer actions.
-  - Offline-first resilience: seamless fallback store if the network is disconnected, with automatic re-syncing.
-- **Brand Selector**: Switch dynamically between brand profiles and their dedicated rulebooks (e.g., *Arka Foods*, *NovaTech Solutions*).
-- **Interactive Rule Tester**: Real-time pattern tester inside the rule editor modal to test regex and phrase matching against sample copy before saving.
-- **Real-Time Compliance Analytics & Insights**: Live dashboard aggregating total reviews, compliance rate, top flagged rules, and category distributions directly from MongoDB.
-- **Review Filters**: Filter issues by Severity (High, Medium, Low), Status (Open, Resolved), or Source (Caption vs Creative).
-- **Interactive Bounding Box Spotlight**: Click any detected issue or poster outline to highlight the exact phrase and its rule card.
-- **Multiple Demo Draft Presets**: Quick-switch between Festive Poster, Health Claim Social Ad, and Flash Sale Offer.
+![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-required-339933?logo=nodedotjs&logoColor=white)
+
+</div>
 
 ---
 
-## Run it
+<div align="center">
 
-### Option 1: Full-Stack with Express & MongoDB (Recommended)
+[Overview](#overview) · [Quick start](#quick-start) · [Features](#features) · [Optional API](#optional-express--mongodb-api) · [Project layout](#project-layout)
 
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-2. **Start the server**:
-   ```bash
-   npm start
-   ```
-3. Open **`http://localhost:3000`** in your browser.
+</div>
 
-The server connects to MongoDB Atlas using the configured `.env` URI, exposes REST endpoints at `/api/...`, and serves the frontend application.
+## Overview
 
-### Option 2: Static Server / Live Server
+Brand Review Desk is a responsive campaign-review prototype. It includes sample campaigns for **FreshBites Organic**, **Arka Foods**, and **NovaTech Solutions**, plus a rule-based compliance review workflow.
 
-You can also run any local HTTP server:
-- In VS Code: Right-click `index.html` -> "Open with Live Server".
-- Python: `python -m http.server 8000` -> open `http://localhost:8000`.
+> **Current app behavior:** the React interface uses built-in demo data. Brand rules and review history are saved in the browser's `localStorage`. The Express/MongoDB API is a separate optional service and is not currently connected to the React interface.
+
+## Quick start
+
+### Requirements
+
+- Node.js 18 or newer
+- npm
+
+### Run the React app
+
+```bash
+npm install
+npm run dev
+```
+
+Open **http://localhost:3000**.
+
+No MongoDB account or `.env` file is needed to explore the React app.
+
+### Build for production
+
+```bash
+npm run build
+npm run preview
+```
+
+Vite serves the production build locally after the build completes.
+
+## Features
+
+| Workspace | What you can do |
+| --- | --- |
+| **Review** | Select demo campaigns, inspect rule findings, edit copy, and record review decisions. |
+| **Brand rules** | Browse, add, edit, enable, disable, reset, and export rules. |
+| **History** | Review saved demo decisions and export review records. |
+| **Insights** | Explore demo compliance summaries and export analytics data. |
+| **Campaign intake** | Add an image and campaign details to the current session. |
+
+The compliance engine evaluates campaign captions and supplied OCR text against enabled, brand-specific regular expressions. The interface includes example OCR text and findings; **image text extraction is currently simulated rather than performed by a live OCR engine**. Treat generated findings, review attestations, and analytics as prototype data—not legal advice or a production audit record.
+
+## Optional Express / MongoDB API
+
+The repository also includes an Express API backed by MongoDB. This service is independent of the React app at present; starting it does not make the React screens use MongoDB.
+
+### Configure the API
+
+1. Copy `.env.example` to `.env`.
+2. Set `MONGO_URI` to a MongoDB connection string you control.
+3. Keep the database name in `DB_NAME` (defaults to `Brand_Review_Desk`) and set the API port to `BACKEND_PORT=5001`.
+
+Keep `.env` private. It is ignored by Git; do not put database credentials in source files or documentation.
+
+### Start the API
+
+```bash
+npm start
+```
+
+The API listens on **http://localhost:5001** when `BACKEND_PORT=5001` is set. Check the database/API status with:
+
+```bash
+curl http://localhost:5001/api/status
+```
+
+The response reports whether MongoDB connected. If it did, `connected` is `true`; otherwise, the API reports fallback status.
+
+### Seed demo records (optional)
+
+```bash
+npm run seed
+```
+
+**Warning:** seeding clears and replaces the `brands`, `rules`, `rulesets`, `campaigns`, `drafts`, and `reviews` collections in the configured database. Back up any data you need before running it.
+
+### API routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/status` | Database connection and collection status |
+| `POST` | `/api/connect` | Re-check the database connection |
+| `GET`, `POST` | `/api/ruleset` | Read or save the active ruleset |
+| `POST` | `/api/ruleset/reset` | Restore the default ruleset |
+| `GET`, `POST` | `/api/draft` | Read or save a draft |
+| `GET`, `POST` | `/api/reviews` | List or add reviews |
+| `DELETE` | `/api/reviews/:id` | Delete a review |
+| `GET` | `/api/brands` | List brands |
+| `GET` | `/api/insights` | Read insight summaries |
+
+## Data and privacy
+
+- The React prototype stores rules and review history in the current browser profile's `localStorage`.
+- Campaigns and other initial screen content are bundled demo data.
+- The optional API uses MongoDB only when configured and started separately.
+- Never commit `.env` or use real customer data in the prototype.
+
+## Project layout
+
+```text
+src/
+  components/       React screens and dialogs
+  data/             Demo brands, campaigns, and review records
+  utils/            Compliance rule types and matching engine
+scripts/
+  seed_mongodb.js   Optional MongoDB demo-data seeder
+server.js           Optional Express API
+db.js               MongoDB connection and API data operations
+vite.config.ts      Vite, React, Tailwind, and /api proxy configuration
+```
+
+## npm scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start the Vite development server on port `3000` |
+| `npm run build` | Create the production client build |
+| `npm run preview` | Preview the production build locally |
+| `npm start` | Start the Express API server |
+| `npm run seed` | Replace demo records in the configured MongoDB database |
 
 ---
 
-## Database Architecture
+<div align="center">
 
-| Collection | Purpose | Schema Key Fields |
-| :--- | :--- | :--- |
-| **`rulesets`** | Complete brand rulebooks | `brand`, `rulesetName`, `version`, `rules[]`, `approvedFacts[]` |
-| **`rules`** | Individual indexed rules | `id`, `name`, `category`, `severity`, `patterns[]`, `regex`, `why`, `suggestion`, `source`, `enabled` |
-| **`reviews`** | Audit trail of approved content | `reviewId`, `contentName`, `brand`, `decisions[]`, `copyChanges[]`, `finalCaption`, `timestamp`, `status` |
-| **`drafts`** | Content drafts & OCR text | `name`, `kind`, `imageUrl`, `caption`, `brand`, `ocr`, `updatedAt` |
-| **`brands`** | Brand profiles | `name`, `industry`, `description`, `rulesCount`, `createdAt` |
-| **`audit_logs`** | Granular event audit logs | `event`, `targetId`, `timestamp`, `details` |
+Built for clearer, more explainable campaign reviews.
 
----
-
-## File Structure
-
-- `server.js` - Express backend server with MongoDB REST API routes
-- `db.js` - MongoDB Atlas driver connector, collection initializers & seeding
-- `index.html` - App shell, brand switcher, and database status card
-- `styles.css` - Modern styling, typography, responsive layout, animations
-- `app.js` - Frontend controller, live API sync, filter engine, modal handlers
-- `engine.js` - Rule check engine, pattern matching, OCR bounding box mapping
-- `vendor/` - Vendored Tesseract.js runtime (MIT), 100% offline OCR
-- `data/` - Default demo ruleset and facts
-- `assets/` - Demo posters and brand assets
-
----
-
-## Honest Scope & Limits
-
-- **Automated**: Text checks on captions and poster OCR text (claims, tone, terminology, pricing disclosures).
-- **Human Decision**: Visual rules (layout, colors, typography) require visual review; poster pixels are not altered automatically. Approved copy changes are handed to the design team in the exported report.
+</div>
