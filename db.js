@@ -649,6 +649,12 @@ async function getStatus() {
 }
 
 // ── User Management ───────────────────────────────────────────────────────────
+let isolatedTestMode = false;
+
+function setIsolatedTestMode(val) {
+  isolatedTestMode = Boolean(val);
+}
+
 async function createUser({ username, email, passwordHash, role = 'reviewer', disabled = false }) {
   const cleanUsername = String(username).trim();
   const cleanEmail = String(email || '').trim();
@@ -656,7 +662,7 @@ async function createUser({ username, email, passwordHash, role = 'reviewer', di
   const emailLower = cleanEmail.toLowerCase();
 
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     const existing = await currentDb.collection('users').findOne({
       $or: [
         { usernameLower },
@@ -724,7 +730,7 @@ async function createUser({ username, email, passwordHash, role = 'reviewer', di
 
 async function countUsers() {
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     return currentDb.collection('users').countDocuments();
   }
   return memoryStore.users.length;
@@ -736,7 +742,7 @@ async function findUser(identifier) {
   const key = raw.toLowerCase();
 
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     const user = await currentDb.collection('users').findOne({
       $or: [{ usernameLower: key }, { emailLower: key }]
     });
@@ -754,7 +760,7 @@ async function findUser(identifier) {
 async function findUserById(id) {
   if (!id) return null;
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     try {
       const objId = typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id;
       return await currentDb.collection('users').findOne({ _id: objId });
@@ -768,7 +774,7 @@ async function findUserById(id) {
 
 async function listUsers() {
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     return currentDb.collection('users')
       .find({}, { projection: { passwordHash: 0 } })
       .sort({ createdAt: -1 })
@@ -793,7 +799,7 @@ async function updateUser(id, updates) {
   }
 
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     let filter;
     try {
       filter = { _id: typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id };
@@ -828,7 +834,7 @@ async function createSession({ sessionId, userId, username, role, csrfToken, exp
   };
 
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     await currentDb.collection('sessions').insertOne(sessionDoc);
     return sessionDoc;
   }
@@ -842,7 +848,7 @@ async function findSession(sessionId) {
   const now = new Date();
 
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     const session = await currentDb.collection('sessions').findOne({ sessionId });
     if (!session) return null;
     if (session.expiresAt && session.expiresAt <= now) {
@@ -864,7 +870,7 @@ async function findSession(sessionId) {
 async function deleteSession(sessionId) {
   if (!sessionId) return;
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     await currentDb.collection('sessions').deleteOne({ sessionId });
     return;
   }
@@ -875,7 +881,7 @@ async function deleteSession(sessionId) {
 async function deleteUserSessions(userId) {
   if (!userId) return;
   const currentDb = await connectDB();
-  if (currentDb && isConnected) {
+  if (!isolatedTestMode && currentDb && isConnected) {
     await currentDb.collection('sessions').deleteMany({ userId: String(userId) });
     return;
   }
@@ -1371,5 +1377,6 @@ module.exports = {
   findWorkspaceCampaignById,
   addWorkspaceReview,
   commonsCampaigns,
-  memoryStore
+  memoryStore,
+  setIsolatedTestMode
 };

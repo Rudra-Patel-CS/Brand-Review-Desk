@@ -423,7 +423,7 @@ test('Feature 4 - Chronological event history logging & duplicate event preventi
       actionType: 'campaign_submitted',
       idempotencyKey
     },
-    { memoryStore: db.memoryStore }
+    { database: await db.connectDB(), memoryStore: db.memoryStore }
   );
   assert.equal(dupEvent.id, submitEvt.id);
 });

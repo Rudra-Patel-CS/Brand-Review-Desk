@@ -6,6 +6,16 @@
 
 const crypto = require('crypto');
 
+let dbModule = null;
+function getDbModule() {
+  if (!dbModule) {
+    try {
+      dbModule = require('./db');
+    } catch {}
+  }
+  return dbModule;
+}
+
 const WORKFLOW_STATUSES = {
   DRAFT: 'draft',
   IN_REVIEW: 'in_review',
@@ -103,11 +113,27 @@ async function logEvent(eventData, options = {}) {
     details: eventData.details || {}
   };
 
-  if (database && options.isConnected !== false) {
+  // Ensure undefined properties are deleted so MongoDB sparse indexes skip them completely
+  if (!eventDoc.idempotencyKey) delete eventDoc.idempotencyKey;
+  if (!eventDoc.reviewId) delete eventDoc.reviewId;
+  if (!eventDoc.fromStatus) delete eventDoc.fromStatus;
+  if (!eventDoc.toStatus) delete eventDoc.toStatus;
+
+  let targetDb = database;
+  if (!targetDb && options.isConnected !== false) {
+    const dbMod = getDbModule();
+    if (dbMod && dbMod.isDbConnected()) {
+      try {
+        targetDb = await dbMod.connectDB();
+      } catch {}
+    }
+  }
+
+  if (targetDb && options.isConnected !== false) {
     try {
       // Check idempotency in database
       if (eventDoc.idempotencyKey) {
-        const existing = await database.collection('events').findOne({
+        const existing = await targetDb.collection('events').findOne({
           idempotencyKey: eventDoc.idempotencyKey
         });
         if (existing) {
@@ -115,12 +141,12 @@ async function logEvent(eventData, options = {}) {
         }
       }
 
-      await database.collection('events').insertOne(eventDoc);
+      await targetDb.collection('events').insertOne(eventDoc);
       return eventDoc;
     } catch (err) {
       if (err.code === 11000 && eventDoc.idempotencyKey) {
         // Unique index collision on retry: return existing
-        return await database.collection('events').findOne({
+        return await targetDb.collection('events').findOne({
           idempotencyKey: eventDoc.idempotencyKey
         });
       }
@@ -156,9 +182,19 @@ async function getCampaignEvents(campaignId, options = {}) {
   const { database, memoryStore } = options;
   const targetId = String(campaignId);
 
-  if (database && options.isConnected !== false) {
+  let targetDb = database;
+  if (!targetDb && options.isConnected !== false) {
+    const dbMod = getDbModule();
+    if (dbMod && dbMod.isDbConnected()) {
+      try {
+        targetDb = await dbMod.connectDB();
+      } catch {}
+    }
+  }
+
+  if (targetDb && options.isConnected !== false) {
     try {
-      return await database.collection('events')
+      return await targetDb.collection('events')
         .find({ campaignId: targetId })
         .sort({ timestamp: 1 })
         .toArray();

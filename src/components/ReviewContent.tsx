@@ -12,6 +12,43 @@ import {
 import { getCsrfToken, AuthUser } from '../utils/auth.js';
 import { WorkflowActionModal, WorkflowModalAction } from './modals/WorkflowActionModal.js';
 import { EventHistoryModal } from './modals/EventHistoryModal.js';
+import {
+  getAllPlatforms,
+  getFormatSpec,
+  analyzeImageDimensions,
+  detectSafeZoneOverlaps,
+  SAFE_ZONE_DISCLAIMER,
+  PlatformFormatSpec
+} from '../utils/safeZoneEngine.js';
+
+function detectDefaultFormatId(formatStr?: string): string {
+  if (!formatStr) return 'ig_feed_portrait_4_5';
+  const lower = formatStr.toLowerCase();
+  if (
+    lower.includes('9:16') ||
+    lower.includes('reel') ||
+    lower.includes('story') ||
+    lower.includes('short') ||
+    lower.includes('tiktok')
+  ) {
+    return 'ig_reels_9_16';
+  }
+  if (lower.includes('4:5') || lower.includes('portrait')) {
+    return 'ig_feed_portrait_4_5';
+  }
+  if (lower.includes('1:1') || lower.includes('square')) {
+    return 'ig_feed_square_1_1';
+  }
+  if (
+    lower.includes('1.91') ||
+    lower.includes('landscape') ||
+    lower.includes('16:9') ||
+    lower.includes('motion')
+  ) {
+    return 'li_feed_landscape_191_1';
+  }
+  return 'ig_feed_portrait_4_5';
+}
 
 interface ReviewContentProps {
   activeBrand: Brand;
@@ -60,6 +97,14 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   const [isEventHistoryOpen, setIsEventHistoryOpen] = useState(false);
   const [workflowToast, setWorkflowToast] = useState<string | null>(null);
 
+  // Platform Safe-Zone State
+  const [selectedFormatId, setSelectedFormatId] = useState<string>(() =>
+    detectDefaultFormatId(activeCampaign.format)
+  );
+  const [showSafeZones, setShowSafeZones] = useState<boolean>(true);
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isSafeZonePanelExpanded, setIsSafeZonePanelExpanded] = useState<boolean>(true);
+
   const findingRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
   // Sync state when active campaign changes
@@ -71,7 +116,46 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setFindings(activeCampaign.initialFindings);
     setSelectedFindingId(null);
     setOcrError(null);
+    setSelectedFormatId(detectDefaultFormatId(activeCampaign.format));
+    setImageDimensions(null);
   }, [activeCampaign]);
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.naturalWidth && img.naturalHeight) {
+      setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+    }
+  };
+
+  const allPlatforms = getAllPlatforms();
+  const currentFormatSpec = selectedFormatId ? getFormatSpec(selectedFormatId) : null;
+  const dimensionAnalysis = analyzeImageDimensions(
+    imageDimensions?.width || 0,
+    imageDimensions?.height || 0,
+    currentFormatSpec
+  );
+
+  const visualElementsForOverlap = [
+    ...findings.filter((f) => f.bbox).map((f) => ({
+      id: f.id,
+      text: f.matchedText,
+      bbox: f.bbox!,
+      severity: f.severity,
+      source: 'finding' as const
+    })),
+    ...(activeCampaign.ocrLines || []).filter((l) => l.bbox).map((l, idx) => ({
+      id: `line-${idx}`,
+      text: l.text,
+      bbox: l.bbox!,
+      severity: 'advisory',
+      source: 'ocr_line' as const
+    }))
+  ];
+
+  const overlapAnalysis = detectSafeZoneOverlaps(
+    visualElementsForOverlap,
+    currentFormatSpec?.safeZones || []
+  );
 
   // Re-run compliance calculations
   const compliance = calculateComplianceScore(findings);
@@ -615,11 +699,55 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   Inspection Proof Viewport
                 </span>
                 <span className="font-mono text-[11px] text-on-surface-variant">
-                  {activeCampaign.format}
+                  {currentFormatSpec ? currentFormatSpec.name : activeCampaign.format}
                 </span>
+
+                {/* Dimension Comparison Badge */}
+                {imageDimensions && (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border flex items-center gap-1 ${
+                      dimensionAnalysis.status === 'exact_match'
+                        ? 'bg-secondary/15 text-secondary border-secondary/30'
+                        : dimensionAnalysis.status === 'aspect_ratio_match'
+                        ? 'bg-primary/15 text-primary border-primary/30'
+                        : dimensionAnalysis.status === 'dimension_mismatch'
+                        ? 'bg-error-container text-on-error-container border-error/40'
+                        : 'bg-surface-container text-on-surface-variant border-surface-container-high'
+                    }`}
+                    title={dimensionAnalysis.message}
+                  >
+                    <span className="material-symbols-outlined text-[12px]">
+                      {dimensionAnalysis.status === 'exact_match' || dimensionAnalysis.status === 'aspect_ratio_match'
+                        ? 'check_circle'
+                        : 'warning'}
+                    </span>
+                    <span>
+                      {imageDimensions.width}×{imageDimensions.height} ({dimensionAnalysis.actualAspectRatioString})
+                      {dimensionAnalysis.status === 'exact_match' && ' • Target Match'}
+                      {dimensionAnalysis.status === 'dimension_mismatch' && ` • Needs ${currentFormatSpec?.aspectRatio || 'Target'}`}
+                    </span>
+                  </span>
+                )}
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Safe-zone toggle button */}
+                <button
+                  type="button"
+                  onClick={() => setShowSafeZones(!showSafeZones)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-colors border shadow-xs ${
+                    showSafeZones
+                      ? 'bg-amber-500/20 text-amber-900 dark:text-amber-200 border-amber-500/50'
+                      : 'bg-surface-container text-on-surface-variant border-surface-container-high hover:text-on-surface'
+                  }`}
+                  title="Toggle Platform UI Safe-Zone Overlays"
+                >
+                  <span className="material-symbols-outlined text-[15px]">
+                    {showSafeZones ? 'layers' : 'layers_clear'}
+                  </span>
+                  <span>Safe Zones: {showSafeZones ? 'ON' : 'OFF'}</span>
+                </button>
+
                 {/* Zoom toggles */}
                 <div className="flex items-center bg-surface-container rounded-lg p-0.5 border border-surface-container-high">
                   <button
@@ -676,7 +804,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
               </div>
             )}
 
-            {/* Artwork Canvas Stage with Interactive OCR Overlays */}
+            {/* Artwork Canvas Stage with Interactive OCR Overlays & Safe Zones */}
             <div className="relative w-full overflow-hidden bg-stone-900 flex items-center justify-center min-h-[420px] max-h-[580px] p-2 select-none">
               <div
                 className="relative transition-transform duration-200 ease-out max-h-full"
@@ -685,8 +813,35 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 <img
                   src={activeCampaign.imageUrl}
                   alt={activeCampaign.title}
+                  onLoad={handleImageLoad}
                   className="w-auto h-auto max-h-[540px] max-w-full rounded-lg object-contain shadow-2xl"
                 />
+
+                {/* Visual Platform Safe-Zone Overlays */}
+                {showSafeZones &&
+                  currentFormatSpec?.safeZones?.map((sz) => (
+                    <div
+                      key={sz.id}
+                      style={{
+                        top: `${sz.top}%`,
+                        left: `${sz.left}%`,
+                        width: `${sz.width}%`,
+                        height: `${sz.height}%`
+                      }}
+                      className={`absolute pointer-events-none transition-all z-10 flex flex-col justify-start p-1 border border-dashed ${
+                        sz.severity === 'high'
+                          ? 'bg-rose-600/25 border-rose-400/80 ring-1 ring-rose-500/40'
+                          : 'bg-amber-500/25 border-amber-400/80 ring-1 ring-amber-500/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1 bg-stone-950/85 backdrop-blur-xs px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-amber-200 w-fit shadow-xs">
+                        <span className="material-symbols-outlined text-[11px] text-amber-400">
+                          visibility_off
+                        </span>
+                        <span>{sz.name}</span>
+                      </div>
+                    </div>
+                  ))}
 
                 {/* Simulated OCR scanning scanline when re-scanning */}
                 {isScanning && (
@@ -841,6 +996,161 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 Review / Correct Artwork Text ({currentOcrText.trim() ? currentOcrText.trim().split(/\s+/).length : 0} words)
               </button>
             </div>
+          </div>
+
+          {/* Platform Safe-Zone & Visual Layout Guidance Card */}
+          <div className="bg-surface-container-lowest rounded-2xl border border-surface-container-high shadow-md overflow-hidden">
+            <div className="px-4 py-3 bg-surface-container-low border-b border-surface-container-high flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary text-[20px]">aspect_ratio</span>
+                <span className="text-xs font-bold text-on-surface uppercase tracking-wide">
+                  Platform Safe-Zone & Layout Guidance
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Platform / Format Selector Dropdown */}
+                <select
+                  value={selectedFormatId}
+                  onChange={(e) => setSelectedFormatId(e.target.value)}
+                  className="text-xs bg-surface-container-lowest border border-surface-container-high rounded-lg px-2.5 py-1 text-on-surface font-medium focus:outline-none focus:ring-1 focus:ring-primary shadow-xs"
+                >
+                  {allPlatforms.map((plat) => (
+                    <optgroup key={plat.id} label={plat.name}>
+                      {plat.formats.map((fmt) => (
+                        <option key={fmt.id} value={fmt.id}>
+                          {plat.name} — {fmt.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  <option value="custom">Custom / Unsupported Format</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => setIsSafeZonePanelExpanded(!isSafeZonePanelExpanded)}
+                  className="text-on-surface-variant hover:text-on-surface p-1 rounded hover:bg-surface-container transition-colors"
+                  title={isSafeZonePanelExpanded ? 'Collapse safe-zone panel' : 'Expand safe-zone panel'}
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    {isSafeZonePanelExpanded ? 'expand_less' : 'expand_more'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {isSafeZonePanelExpanded && (
+              <div className="p-4 space-y-3.5 text-xs">
+                {/* Dimension & Aspect Ratio Status */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-surface-container-low border border-surface-container-high">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-on-surface">Asset Dimensions:</span>
+                      <span className="font-mono text-on-surface-variant">
+                        {imageDimensions
+                          ? `${imageDimensions.width} × ${imageDimensions.height} px (${dimensionAnalysis.actualAspectRatioString})`
+                          : 'Detecting image dimensions…'}
+                      </span>
+                      {currentFormatSpec && (
+                        <>
+                          <span className="text-on-surface-variant">•</span>
+                          <span className="font-semibold text-on-surface">Target:</span>
+                          <span className="font-mono text-on-surface-variant">
+                            {currentFormatSpec.targetWidth} × {currentFormatSpec.targetHeight} px ({currentFormatSpec.aspectRatio})
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant">{dimensionAnalysis.message}</p>
+                  </div>
+
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 border ${
+                      dimensionAnalysis.status === 'exact_match'
+                        ? 'bg-secondary/15 text-secondary border-secondary/30'
+                        : dimensionAnalysis.status === 'aspect_ratio_match'
+                        ? 'bg-primary/15 text-primary border-primary/30'
+                        : dimensionAnalysis.status === 'dimension_mismatch'
+                        ? 'bg-error-container text-on-error-container border-error/40'
+                        : 'bg-surface-container text-on-surface-variant border-surface-container-high'
+                    }`}
+                  >
+                    {dimensionAnalysis.label}
+                  </span>
+                </div>
+
+                {/* Obscured Region Detection Warnings */}
+                {overlapAnalysis.hasOverlaps ? (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-950 space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-rose-900">
+                      <span className="material-symbols-outlined text-[18px] text-rose-700">warning</span>
+                      <span>Interface Obscuration Alert: {overlapAnalysis.totalObscuredCount} element(s) overlap platform UI controls</span>
+                    </div>
+                    <ul className="space-y-1.5 pl-5 list-disc text-[11px] text-rose-900/90 leading-relaxed">
+                      {overlapAnalysis.overlaps.map((item, idx) => (
+                        <li key={idx}>
+                          <strong>"{item.text}"</strong> intersects <strong>{item.safeZoneName}</strong> (~{item.overlapPercentage}% obscured).
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : currentFormatSpec?.safeZones && currentFormatSpec.safeZones.length > 0 ? (
+                  <div className="p-2.5 rounded-xl bg-secondary/10 border border-secondary/30 text-secondary flex items-center gap-2 text-xs">
+                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                    <span>
+                      Safe-Zone Clearance Verified: Detected text elements and compliance claims avoid critical platform interface overlays.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-surface-container-low border border-surface-container-high text-on-surface-variant flex items-center gap-2 text-xs">
+                    <span className="material-symbols-outlined text-[18px]">info</span>
+                    <span>
+                      Full Canvas Safe: Native platform interface elements do not intrude into the artwork canvas for this format.
+                    </span>
+                  </div>
+                )}
+
+                {/* Layout Guidance from Platform Spec */}
+                {currentFormatSpec?.layoutGuidance && (
+                  <div className="p-3 rounded-xl bg-surface-container-low border border-surface-container-high space-y-1">
+                    <span className="font-bold text-on-surface block text-[11px] uppercase tracking-wide">
+                      Platform Layout Recommendations ({currentFormatSpec.name})
+                    </span>
+                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                      {currentFormatSpec.layoutGuidance}
+                    </p>
+                  </div>
+                )}
+
+                {/* Official Source Documentation Citation & Verification Date */}
+                {currentFormatSpec?.officialSourceUrl && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-surface-container-high text-[11px] text-on-surface-variant">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[15px] text-secondary">verified</span>
+                      <span>
+                        Verified Specification ({currentFormatSpec.lastVerifiedDate}):{' '}
+                        <strong>{currentFormatSpec.officialSourceDoc}</strong>
+                      </span>
+                    </div>
+                    <a
+                      href={currentFormatSpec.officialSourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-secondary hover:text-primary font-semibold underline"
+                    >
+                      <span>Official Source Specs</span>
+                      <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                    </a>
+                  </div>
+                )}
+
+                {/* Safe-Zone Standard Disclaimer */}
+                <p className="text-[10px] text-on-surface-variant/75 italic leading-tight pt-0.5">
+                  {SAFE_ZONE_DISCLAIMER}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* OCR Transparency & Human Verification Statement Card */}

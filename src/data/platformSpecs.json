@@ -1,0 +1,248 @@
+{
+  "specificationsVersion": "2026.1",
+  "platforms": [
+    {
+      "id": "instagram",
+      "name": "Instagram",
+      "formats": [
+        {
+          "id": "ig_reels_9_16",
+          "name": "Reels & Stories (9:16)",
+          "aspectRatio": "9:16",
+          "aspectRatioNum": 0.5625,
+          "targetWidth": 1080,
+          "targetHeight": 1920,
+          "minWidth": 540,
+          "minHeight": 960,
+          "officialSourceUrl": "https://help.instagram.com/193132740708348",
+          "officialSourceDoc": "Meta Business Help Center - Instagram Video Ads Specifications",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [
+            {
+              "id": "ig_reels_top",
+              "name": "Top App Bar & Header",
+              "description": "Obscured by camera toggle, audio pill tag, Stories timeline ticks, and close button.",
+              "top": 0,
+              "left": 0,
+              "width": 100,
+              "height": 14,
+              "severity": "high"
+            },
+            {
+              "id": "ig_reels_bottom",
+              "name": "Bottom Profile & Caption",
+              "description": "Obscured by username handle, caption text preview, audio track marquee, and CTA pill.",
+              "top": 80,
+              "left": 0,
+              "width": 100,
+              "height": 20,
+              "severity": "high"
+            },
+            {
+              "id": "ig_reels_right",
+              "name": "Right Engagement Rail",
+              "description": "Obscured by Like, Comment, Share, Bookmark buttons, and rotating audio track icon.",
+              "top": 45,
+              "left": 86,
+              "width": 14,
+              "height": 35,
+              "severity": "medium"
+            }
+          ],
+          "layoutGuidance": "Keep key headlines, legal disclaimers, and focal product elements within the central safe area (14% below top, 20% above bottom, and 14% away from the right edge)."
+        },
+        {
+          "id": "ig_feed_portrait_4_5",
+          "name": "Feed Post Portrait (4:5)",
+          "aspectRatio": "4:5",
+          "aspectRatioNum": 0.8,
+          "targetWidth": 1080,
+          "targetHeight": 1350,
+          "minWidth": 480,
+          "minHeight": 600,
+          "officialSourceUrl": "https://www.facebook.com/business/help/105399436216001",
+          "officialSourceDoc": "Meta Business Help Center - Guide to Instagram Ad Specs",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [
+            {
+              "id": "ig_grid_top_crop",
+              "name": "Profile Grid Top Crop Zone",
+              "description": "When viewed in the profile feed 1:1 grid preview, the top 10% is cropped out.",
+              "top": 0,
+              "left": 0,
+              "width": 100,
+              "height": 10,
+              "severity": "medium"
+            },
+            {
+              "id": "ig_grid_bottom_crop",
+              "name": "Profile Grid Bottom Crop Zone",
+              "description": "When viewed in the profile feed 1:1 grid preview, the bottom 10% is cropped out.",
+              "top": 90,
+              "left": 0,
+              "width": 100,
+              "height": 10,
+              "severity": "medium"
+            }
+          ],
+          "layoutGuidance": "Maintain key brand marks, logos, and center-focused copy within the central 1:1 square area so cropped profile grid previews remain legible."
+        },
+        {
+          "id": "ig_feed_square_1_1",
+          "name": "Feed Post Square (1:1)",
+          "aspectRatio": "1:1",
+          "aspectRatioNum": 1.0,
+          "targetWidth": 1080,
+          "targetHeight": 1080,
+          "minWidth": 320,
+          "minHeight": 320,
+          "officialSourceUrl": "https://www.facebook.com/business/help/105399436216001",
+          "officialSourceDoc": "Meta Business Help Center - Guide to Instagram Ad Specs",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [],
+          "layoutGuidance": "1:1 square posts display 100% visible in both the feed and profile grid without overlay obstruction."
+        }
+      ]
+    },
+    {
+      "id": "tiktok",
+      "name": "TikTok",
+      "formats": [
+        {
+          "id": "tiktok_infeed_9_16",
+          "name": "In-Feed Video Ad (9:16)",
+          "aspectRatio": "9:16",
+          "aspectRatioNum": 0.5625,
+          "targetWidth": 1080,
+          "targetHeight": 1920,
+          "minWidth": 540,
+          "minHeight": 960,
+          "officialSourceUrl": "https://ads.tiktok.com/help/article/creative-specifications-for-in-feed-ads",
+          "officialSourceDoc": "TikTok for Business - Creative Specifications for In-Feed Ads",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [
+            {
+              "id": "tiktok_top_bar",
+              "name": "Top Header & Live Bar",
+              "description": "Obscured by search icon, LIVE button, and Following / For You tab bar.",
+              "top": 0,
+              "left": 0,
+              "width": 100,
+              "height": 7,
+              "severity": "medium"
+            },
+            {
+              "id": "tiktok_bottom_meta",
+              "name": "Bottom Caption & CTA",
+              "description": "Obscured by account username, ad copy, hashtag list, sound marquee, and interactive CTA bar.",
+              "top": 78,
+              "left": 0,
+              "width": 100,
+              "height": 22,
+              "severity": "high"
+            },
+            {
+              "id": "tiktok_right_rail",
+              "name": "Right Action Rail",
+              "description": "Obscured by creator profile avatar, follow button, heart, comments, save, and share icons.",
+              "top": 40,
+              "left": 88,
+              "width": 12,
+              "height": 40,
+              "severity": "high"
+            }
+          ],
+          "layoutGuidance": "TikTok's native interface elements heavily occupy the bottom 22% and right 12%. Place core artwork text and visual proof points between 10% from the top and 25% from the bottom."
+        }
+      ]
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "formats": [
+        {
+          "id": "yt_shorts_9_16",
+          "name": "YouTube Shorts (9:16)",
+          "aspectRatio": "9:16",
+          "aspectRatioNum": 0.5625,
+          "targetWidth": 1080,
+          "targetHeight": 1920,
+          "minWidth": 540,
+          "minHeight": 960,
+          "officialSourceUrl": "https://support.google.com/youtube/answer/10059070",
+          "officialSourceDoc": "YouTube Help - Create YouTube Shorts Specifications",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [
+            {
+              "id": "yt_shorts_top",
+              "name": "Top Header Navigation",
+              "description": "Obscured by camera button, search icon, and Shorts overflow menu.",
+              "top": 0,
+              "left": 0,
+              "width": 100,
+              "height": 8,
+              "severity": "medium"
+            },
+            {
+              "id": "yt_shorts_bottom",
+              "name": "Bottom Title & Channel Bar",
+              "description": "Obscured by video title, channel badge, subscribe button, and remix sound bar.",
+              "top": 81,
+              "left": 0,
+              "width": 100,
+              "height": 19,
+              "severity": "high"
+            },
+            {
+              "id": "yt_shorts_right",
+              "name": "Right Action Icons",
+              "description": "Obscured by Thumbs Up, Thumbs Down, Comments, Share, and Remix icons.",
+              "top": 45,
+              "left": 89,
+              "width": 11,
+              "height": 38,
+              "severity": "medium"
+            }
+          ],
+          "layoutGuidance": "Ensure important claims and disclaimers are positioned in the center viewport above 20% from the bottom margin."
+        }
+      ]
+    },
+    {
+      "id": "linkedin",
+      "name": "LinkedIn",
+      "formats": [
+        {
+          "id": "li_feed_landscape_191_1",
+          "name": "Feed Sponsored Content (1.91:1)",
+          "aspectRatio": "1.91:1",
+          "aspectRatioNum": 1.9138,
+          "targetWidth": 1200,
+          "targetHeight": 627,
+          "minWidth": 400,
+          "minHeight": 209,
+          "officialSourceUrl": "https://www.linkedin.com/help/lms/answer/a423376",
+          "officialSourceDoc": "LinkedIn Marketing Solutions - Single Image Ad Specifications",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [],
+          "layoutGuidance": "Standard LinkedIn in-feed image. Interface controls do not overlay the artwork canvas."
+        },
+        {
+          "id": "li_feed_square_1_1",
+          "name": "Feed Sponsored Square (1:1)",
+          "aspectRatio": "1:1",
+          "aspectRatioNum": 1.0,
+          "targetWidth": 1200,
+          "targetHeight": 1200,
+          "minWidth": 400,
+          "minHeight": 400,
+          "officialSourceUrl": "https://www.linkedin.com/help/lms/answer/a423376",
+          "officialSourceDoc": "LinkedIn Marketing Solutions - Single Image Ad Specifications",
+          "lastVerifiedDate": "2026-02-15",
+          "safeZones": [],
+          "layoutGuidance": "1:1 square posts render with full visibility on desktop and mobile feeds."
+        }
+      ]
+    }
+  ]
+}

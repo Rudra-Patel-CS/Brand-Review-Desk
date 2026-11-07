@@ -88,6 +88,7 @@ function extractCookieValue(setCookieHeaders: string[], cookieName: string): str
 
 test('Setup test server and clean users/sessions', async () => {
   // Clear memory store users & sessions for isolated testing
+  db.setIsolatedTestMode(true);
   db.memoryStore.users = [];
   db.memoryStore.sessions = [];
 
@@ -366,5 +367,6 @@ test('Feature 1 - Rate limiting on excessive failed authentication attempts', as
 });
 
 test('Teardown test server', async () => {
+  db.setIsolatedTestMode(false);
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
