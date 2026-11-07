@@ -1,14 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header.js';
 import { Navigation } from './components/Navigation.js';
 import { AuthPage } from './components/AuthPage.js';
 import {
   AuthSession,
-  authFetch,
-  authHeaders,
-  clearSession,
-  loadSession,
-  saveSession
+  AuthUser,
+  apiFetch,
+  setCsrfToken
 } from './utils/auth.js';
 import { ReviewContent } from './components/ReviewContent.js';
 import { BrandRules } from './components/BrandRules.js';
@@ -21,6 +19,7 @@ import { ApproveExportModal } from './components/modals/ApproveExportModal.js';
 import { DismissNoteModal } from './components/modals/DismissNoteModal.js';
 import { DatabaseStatusModal } from './components/modals/DatabaseStatusModal.js';
 import { PlannedFeatureModal } from './components/modals/PlannedFeatureModal.js';
+import { UserManagementModal } from './components/modals/UserManagementModal.js';
 
 import { BRANDS, INITIAL_PRESETS, INITIAL_REVIEWS, Brand } from './data/mockData.js';
 import {
@@ -31,34 +30,36 @@ import {
   ReviewRecord
 } from './utils/rulesEngine.js';
 
+interface WorkspaceSnapshot {
+  connected: boolean;
+  database: string;
+  updatedAt: string;
+  brands: Brand[];
+  rules: BrandRule[];
+  campaigns: CampaignPreset[];
+  reviews: ReviewRecord[];
+}
+
 export default function App() {
-  // ── Session / authentication gate ──────────────────────────────────────────
-  const [session, setSession] = useState<AuthSession | null>(() => loadSession());
-  const [authChecking, setAuthChecking] = useState<boolean>(() => loadSession() !== null);
+  // ── Session / authentication state (in-memory only, no localStorage tokens) ──
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
 
-  // Re-validate a stored session against the API on first load.
+  // Check existing session via HttpOnly cookie on first load
   useEffect(() => {
-    if (!session) {
-      setAuthChecking(false);
-      return;
-    }
-
     let cancelled = false;
-    authFetch('/api/auth/me')
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Session invalid');
-        const data = await res.json();
-        if (!cancelled && data?.user) {
-          const refreshed: AuthSession = { token: session.token, user: data.user };
-          saveSession(refreshed);
-          setSession(refreshed);
+    apiFetch<{ user: AuthUser; csrfToken: string }>('/api/auth/me')
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok && res.data?.user) {
+          setCsrfToken(res.data.csrfToken || null);
+          setUser(res.data.user);
+        } else {
+          setUser(null);
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          clearSession();
-          setSession(null);
-        }
+        if (!cancelled) setUser(null);
       })
       .finally(() => {
         if (!cancelled) setAuthChecking(false);
@@ -67,92 +68,40 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // Intentionally runs once on mount; session updates are handled explicitly.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Navigation state
   const [activeTab, setActiveTab] = useState<'review' | 'rules' | 'history' | 'insights'>('review');
 
   const handleAuthSuccess = (next: AuthSession) => {
-    saveSession(next);
-    setSession(next);
+    setCsrfToken(next.csrfToken);
+    setUser(next.user);
     setAuthChecking(false);
     setActiveTab('review');
+    showToast(`Signed in as ${next.user.username} (${next.user.role})`);
   };
 
-  const handleLogout = () => {
-    fetch('/api/auth/logout', {
-      method: 'POST',
-      headers: authHeaders()
-    }).catch(() => {
-      // Signing out locally is enough even if the API is unreachable.
-    });
-    clearSession();
-    setSession(null);
+  const handleLogout = async () => {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Signing out locally is enough
+    }
+    setCsrfToken(null);
+    setUser(null);
     setActiveTab('review');
+    showToast('Signed out successfully');
   };
 
-  // Brand state
-  const [brands] = useState<Brand[]>(BRANDS);
+  // Workspace data state (hydrated from MongoDB workspace endpoint)
+  const [brands, setBrands] = useState<Brand[]>(BRANDS);
   const [activeBrand, setActiveBrand] = useState<Brand>(BRANDS[0]);
-
-  // Brand Rules state (hydrated from localStorage or default).
-  // Saved rules are merged with new system defaults so existing users pick up
-  // newly added brands and rules without losing their local edits.
-  const [rules, setRules] = useState<BrandRule[]>(() => {
-    let savedRules: BrandRule[] = [];
-    try {
-      const saved = localStorage.getItem('brd_brand_rules');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) savedRules = parsed;
-      }
-    } catch {
-      // fallback
-    }
-
-    if (savedRules.length === 0) return DEFAULT_RULES;
-
-    const savedIds = new Set(savedRules.map((r) => r.id));
-    const missingDefaults = DEFAULT_RULES.filter((r) => !savedIds.has(r.id));
-    return [...savedRules, ...missingDefaults];
-  });
-
-  // Save rules to localStorage on change
-  useEffect(() => {
-    try {
-      localStorage.setItem('brd_brand_rules', JSON.stringify(rules));
-    } catch {
-      // ignore
-    }
-  }, [rules]);
-
-  // Campaign presets
+  const [rules, setRules] = useState<BrandRule[]>(DEFAULT_RULES);
   const [campaigns, setCampaigns] = useState<CampaignPreset[]>(INITIAL_PRESETS);
   const [activeCampaign, setActiveCampaign] = useState<CampaignPreset>(INITIAL_PRESETS[0]);
+  const [reviews, setReviews] = useState<ReviewRecord[]>(INITIAL_REVIEWS);
 
-  // Review history
-  const [reviews, setReviews] = useState<ReviewRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('brd_review_history');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return INITIAL_REVIEWS;
-  });
-
-  // Save reviews to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('brd_review_history', JSON.stringify(reviews));
-    } catch {
-      // ignore
-    }
-  }, [reviews]);
-
-  // Offline / Storage state
+  // System & connection state
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -172,29 +121,97 @@ export default function App() {
   const [isDbStatusOpen, setIsDbStatusOpen] = useState(false);
   const [isPlannedOpen, setIsPlannedOpen] = useState(false);
   const [plannedTitle, setPlannedTitle] = useState('Planned Feature');
+  const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 2800);
+    }, 3000);
   };
 
-  // Rule actions
-  const handleToggleRule = (ruleId: string) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === ruleId ? { ...r, enabled: !r.enabled } : r))
-    );
-    const rule = rules.find((r) => r.id === ruleId);
-    showToast(`Rule ${ruleId} ${rule?.enabled ? 'disabled' : 'enabled'}`);
+  // ── Workspace polling & sync with backend ────────────────────────────────────
+  const refreshWorkspace = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await apiFetch<WorkspaceSnapshot>('/api/workspace');
+      if (res.ok && res.data) {
+        const snapshot = res.data;
+        if (Array.isArray(snapshot.brands) && snapshot.brands.length) {
+          setBrands(snapshot.brands);
+        }
+        if (Array.isArray(snapshot.rules) && snapshot.rules.length) {
+          setRules(snapshot.rules);
+        }
+        if (Array.isArray(snapshot.campaigns) && snapshot.campaigns.length) {
+          setCampaigns(snapshot.campaigns);
+        }
+        if (Array.isArray(snapshot.reviews)) {
+          setReviews(snapshot.reviews);
+        }
+      }
+    } catch {
+      // Keep existing memory state on transient errors
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    void refreshWorkspace();
+    const interval = window.setInterval(() => {
+      void refreshWorkspace();
+    }, 10000);
+    return () => window.clearInterval(interval);
+  }, [user, refreshWorkspace]);
+
+  // Sync activeBrand when brands list updates
+  useEffect(() => {
+    if (brands.length && !brands.some((b) => b.id === activeBrand.id)) {
+      setActiveBrand(brands[0]);
+    }
+  }, [brands, activeBrand.id]);
+
+  // Rule actions with API persistence
+  const handleToggleRule = async (ruleId: string) => {
+    const targetRule = rules.find((r) => r.id === ruleId);
+    if (!targetRule) return;
+    const updatedRule = { ...targetRule, enabled: !targetRule.enabled };
+
+    setRules((prev) => prev.map((r) => (r.id === ruleId ? updatedRule : r)));
+
+    try {
+      await apiFetch(`/api/workspace/rules/${encodeURIComponent(ruleId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(updatedRule)
+      });
+      showToast(`Rule ${ruleId} ${updatedRule.enabled ? 'enabled' : 'disabled'}`);
+    } catch {
+      showToast(`Rule updated locally`);
+    }
   };
 
-  const handleDeleteRule = (ruleId: string) => {
+  const handleDeleteRule = async (ruleId: string) => {
+    const targetRule = rules.find((r) => r.id === ruleId);
+    if (!targetRule) return;
+
+    if (user?.role !== 'admin') {
+      showToast('Deleting rules requires Administrator role.');
+      return;
+    }
+
     setRules((prev) => prev.filter((r) => r.id !== ruleId));
-    showToast(`Rule ${ruleId} deleted`);
+
+    try {
+      await apiFetch(`/api/workspace/rules/${encodeURIComponent(ruleId)}?brand=${encodeURIComponent(targetRule.brand)}`, {
+        method: 'DELETE'
+      });
+      showToast(`Rule ${ruleId} deleted from database`);
+    } catch {
+      showToast(`Rule ${ruleId} deleted locally`);
+    }
   };
 
-  const handleSaveRule = (savedRule: BrandRule) => {
+  const handleSaveRule = async (savedRule: BrandRule) => {
     setRules((prev) => {
       const exists = prev.some((r) => r.id === savedRule.id);
       if (exists) {
@@ -202,7 +219,17 @@ export default function App() {
       }
       return [savedRule, ...prev];
     });
-    showToast(`Rule ${savedRule.id} saved`);
+
+    try {
+      await apiFetch(`/api/workspace/rules/${encodeURIComponent(savedRule.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(savedRule)
+      });
+      showToast(`Rule ${savedRule.id} saved to database`);
+      await refreshWorkspace();
+    } catch {
+      showToast(`Rule ${savedRule.id} saved`);
+    }
   };
 
   const handleResetRules = () => {
@@ -210,16 +237,32 @@ export default function App() {
     showToast('Reset brand rules to system default');
   };
 
-  // Campaign upload action
-  const handleAddCampaign = (newCampaign: CampaignPreset) => {
+  // Campaign upload and save
+  const handleAddCampaign = async (newCampaign: CampaignPreset) => {
     setCampaigns((prev) => [newCampaign, ...prev]);
     setActiveCampaign(newCampaign);
     showToast(`Uploaded ${newCampaign.title} (${newCampaign.code})`);
+
+    try {
+      await apiFetch('/api/workspace/campaigns', {
+        method: 'POST',
+        body: JSON.stringify(newCampaign)
+      });
+      await refreshWorkspace();
+    } catch {
+      // Local state already updated
+    }
   };
 
-  // Approve & file to Review History
-  const handleConfirmApproval = () => {
+  // Approve & file to Review History (Approver or Admin role required)
+  const handleConfirmApproval = async () => {
     if (!approveData) return;
+
+    if (user?.role === 'reviewer') {
+      showToast('Permission denied: Review approval requires Approver or Admin role.');
+      setIsApproveOpen(false);
+      return;
+    }
 
     const newRecord: ReviewRecord = {
       id: `rev-${Date.now()}`,
@@ -229,9 +272,13 @@ export default function App() {
       brandName: approveData.campaign.brandName,
       channel: approveData.campaign.channel,
       reviewedAt: 'Just now',
-      reviewerName: session?.user.username ?? 'Portal Reviewer',
+      reviewerName: user?.username ?? 'Authenticated Reviewer',
       reviewerRole:
-        session?.user.role === 'admin' ? 'Workspace Administrator' : 'Brand Compliance Reviewer',
+        user?.role === 'admin'
+          ? 'Workspace Administrator'
+          : user?.role === 'approver'
+            ? 'Senior Compliance Approver'
+            : 'Brand Reviewer',
       auditId: `E8F-${Math.floor(10 + Math.random() * 90)}-CERT`,
       sha256Hash: '4f9ca821' + Math.random().toString(16).slice(2, 12) + 'a72e8b',
       status: 'approved',
@@ -242,17 +289,31 @@ export default function App() {
       oldCopy: approveData.campaign.caption,
       newCopy: approveData.caption,
       findings: approveData.findings,
-      notes: `Approved without objections by ${session?.user.username ?? 'the reviewer'}. Cryptographic attestation generated.`
+      notes: `Approved and signed-off by ${user?.username} (${user?.role}). Cryptographic attestation generated.`
     };
 
     setReviews((prev) => [newRecord, ...prev]);
-    showToast(`Authorized & exported dossier #${newRecord.dossierNumber}`);
-    setActiveTab('history');
+
+    try {
+      const res = await apiFetch('/api/workspace/reviews', {
+        method: 'POST',
+        body: JSON.stringify(newRecord)
+      });
+      if (!res.ok) {
+        throw new Error(res.data?.error || 'Could not file review in database');
+      }
+      showToast(`Authorized & exported dossier #${newRecord.dossierNumber}`);
+      await refreshWorkspace();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Review filed locally');
+    } finally {
+      setIsApproveOpen(false);
+      setApproveData(null);
+      setActiveTab('history');
+    }
   };
 
-  // Dismiss finding with note
-  const handleConfirmDismiss = (findingId: string, note: string) => {
-    // Handled in ReviewContent findings state or through custom updater
+  const handleConfirmDismiss = (findingId: string, _note: string) => {
     showToast(`Finding ${findingId} dismissed with counsel note`);
   };
 
@@ -261,8 +322,8 @@ export default function App() {
       const next = !prev;
       showToast(
         next
-          ? 'Switched to Offline Fallback Mode (IndexedDB active)'
-          : 'Reconnected to MongoDB Atlas Database'
+          ? 'Switched to Offline Fallback Mode'
+          : 'Reconnected to Database'
       );
       return next;
     });
@@ -277,13 +338,13 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2 text-sm text-on-surface-variant">
           <span className="w-4 h-4 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-          Verifying your session…
+          Verifying your secure session…
         </div>
       </div>
     );
   }
 
-  if (!session) {
+  if (!user) {
     return <AuthPage onAuthSuccess={handleAuthSuccess} />;
   }
 
@@ -305,7 +366,6 @@ export default function App() {
         activeBrand={activeBrand}
         onSelectBrand={(b) => {
           setActiveBrand(b);
-          // Auto select a preset belonging to this brand if available
           const brandPreset = campaigns.find((c) => c.brandId === b.id);
           if (brandPreset) setActiveCampaign(brandPreset);
           showToast(`Active brand context: ${b.name}`);
@@ -315,7 +375,8 @@ export default function App() {
         isOfflineMode={isOfflineMode}
         onToggleOffline={handleToggleOffline}
         onOpenDbStatus={() => setIsDbStatusOpen(true)}
-        user={session.user}
+        onOpenUserManagement={() => setIsUserMgmtOpen(true)}
+        user={user}
         onLogout={handleLogout}
       />
 
@@ -338,6 +399,10 @@ export default function App() {
               setIsOcrOpen(true);
             }}
             onOpenApproveModal={(camp, cap, f) => {
+              if (user.role === 'reviewer') {
+                showToast('Review approval requires Approver or Administrator role.');
+                return;
+              }
               setApproveData({ campaign: camp, caption: cap, findings: f });
               setIsApproveOpen(true);
             }}
@@ -446,6 +511,15 @@ export default function App() {
         onClose={() => setIsPlannedOpen(false)}
         featureTitle={plannedTitle}
       />
+
+      {user.role === 'admin' && (
+        <UserManagementModal
+          isOpen={isUserMgmtOpen}
+          onClose={() => setIsUserMgmtOpen(false)}
+          currentUser={user}
+          onShowToast={showToast}
+        />
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AuthSession, AuthUser } from '../utils/auth.js';
+import { AuthSession, AuthUser, setCsrfToken } from '../utils/auth.js';
 
-type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'bootstrap';
 
 interface AuthPageProps {
   onAuthSuccess: (session: AuthSession) => void;
@@ -11,6 +11,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [mode, setMode] = useState<AuthMode>('login');
+  const [bootstrapRequired, setBootstrapRequired] = useState<boolean | null>(null);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,17 +21,28 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
+  const [showRegistrationNotice, setShowRegistrationNotice] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/status')
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) setDbConnected(Boolean(data?.connected));
-      })
-      .catch(() => {
-        if (!cancelled) setDbConnected(false);
-      });
+
+    // Check DB status & bootstrap status
+    Promise.all([
+      fetch('/api/status', { credentials: 'include' }).then((r) => r.json()).catch(() => null),
+      fetch('/api/auth/bootstrap-status', { credentials: 'include' }).then((r) => r.json()).catch(() => null)
+    ]).then(([statusData, bootstrapData]) => {
+      if (cancelled) return;
+      if (statusData) setDbConnected(Boolean(statusData.connected));
+
+      if (bootstrapData && bootstrapData.bootstrapRequired) {
+        setBootstrapRequired(true);
+        setMode('bootstrap');
+      } else {
+        setBootstrapRequired(false);
+        setMode('login');
+      }
+    });
+
     return () => {
       cancelled = true;
     };
@@ -39,14 +51,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const resetMessages = () => {
     setError(null);
     setSuccess(null);
-  };
-
-  const switchMode = (next: AuthMode) => {
-    resetMessages();
-    setPassword('');
-    setConfirmPassword('');
-    setShowPassword(false);
-    setMode(next);
+    setShowRegistrationNotice(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -57,13 +62,13 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     const cleanEmail = email.trim();
 
     if (!cleanUsername) {
-      setError(mode === 'login' ? 'Enter your username or email.' : 'Choose a username.');
+      setError(mode === 'login' ? 'Enter your username or email.' : 'Choose an administrator username.');
       return;
     }
 
-    if (mode === 'register') {
+    if (mode === 'bootstrap') {
       if (!EMAIL_RE.test(cleanEmail)) {
-        setError('Enter a valid email address.');
+        setError('Enter a valid email address for the administrator.');
         return;
       }
       if (password.length < 8) {
@@ -81,7 +86,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
     setLoading(true);
     try {
-      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/bootstrap';
       const body =
         mode === 'login'
           ? { identifier: cleanUsername, password }
@@ -90,6 +95,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body)
       });
 
@@ -101,24 +107,19 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || 'Something went wrong. Please try again.');
+        throw new Error(data?.error || 'Authentication failed. Please check your credentials.');
       }
 
-      if (mode === 'register') {
-        const user: AuthUser | undefined = data?.user;
-        setSuccess('Account created successfully. Sign in to enter the portal.');
-        setMode('login');
-        setUsername(user?.username || cleanUsername);
-        setPassword('');
-        setConfirmPassword('');
-        setShowPassword(false);
-      } else {
-        onAuthSuccess({ token: data.token, user: data.user });
+      if (data?.csrfToken) {
+        setCsrfToken(data.csrfToken);
       }
+
+      const user: AuthUser = data.user;
+      onAuthSuccess({ user, csrfToken: data.csrfToken || '' });
     } catch (err) {
       const message =
         err instanceof TypeError
-          ? 'Cannot reach the server. Start the API with "npm start" and try again.'
+          ? 'Cannot reach the server. Make sure the backend server is running.'
           : err instanceof Error
             ? err.message
             : 'Request failed.';
@@ -165,9 +166,10 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
           <div className="mt-10 space-y-3">
             {[
-              ['fact_check', 'Rule-based claim detection'],
-              ['verified_user', 'Cryptographic sign-off records'],
-              ['monitoring', 'Live compliance insights']
+              ['shield_person', 'Role-Based Access: Admin, Approver, Reviewer'],
+              ['fact_check', 'Rule-based claim detection & OCR verification'],
+              ['verified_user', 'Cryptographic review sign-off records'],
+              ['lock', 'Server-managed sessions with HttpOnly cookies']
             ].map(([icon, label]) => (
               <div key={label} className="flex items-center gap-3 text-sm text-on-primary/80">
                 <span className="material-symbols-outlined text-[18px] text-primary-fixed-dim">
@@ -181,7 +183,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
         <div className="relative flex items-center gap-2 text-[11px] font-mono text-on-primary/50">
           <span className="w-1.5 h-1.5 rounded-full bg-secondary-fixed-dim" />
-          Accounts secured in MongoDB Atlas
+          Enterprise Session Storage · Access Controlled
         </div>
       </aside>
 
@@ -201,12 +203,12 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
             <div className="flex items-start justify-between gap-3 mb-6">
               <div>
                 <h2 className="font-serif text-2xl text-on-surface">
-                  {mode === 'login' ? 'Welcome back' : 'Create your account'}
+                  {mode === 'bootstrap' ? 'First-Admin Setup' : 'Welcome back'}
                 </h2>
                 <p className="text-xs text-on-surface-variant mt-1">
-                  {mode === 'login'
-                    ? 'Sign in to open the review desk.'
-                    : 'New accounts get access to the full workspace.'}
+                  {mode === 'bootstrap'
+                    ? 'Initialize the workspace with your administrator account.'
+                    : 'Sign in to access your brand compliance workspace.'}
                 </p>
               </div>
               <span
@@ -217,7 +219,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                       ? 'border-secondary/20 bg-secondary/5 text-secondary'
                       : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}
-                title="MongoDB Atlas connection status"
+                title="Database connection status"
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
@@ -228,27 +230,33 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                         : 'bg-amber-500'
                   }`}
                 />
-                {dbConnected === null ? 'Checking' : dbConnected ? 'Atlas online' : 'Atlas offline'}
+                {dbConnected === null ? 'Checking' : dbConnected ? 'Database online' : 'Storage fallback'}
               </span>
             </div>
 
-            {/* Mode switcher */}
-            <div className="flex rounded-xl bg-surface-container-low p-1 mb-6 border border-surface-container-high">
-              {(['login', 'register'] as AuthMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => switchMode(m)}
-                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
-                    mode === m
-                      ? 'bg-surface-container-lowest text-primary shadow-sm'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  {m === 'login' ? 'Sign In' : 'Create Account'}
-                </button>
-              ))}
-            </div>
+            {mode === 'bootstrap' && (
+              <div className="mb-5 p-3 rounded-xl bg-secondary/10 border border-secondary/20 text-xs text-on-surface">
+                <div className="flex items-center gap-1.5 font-semibold text-secondary mb-1">
+                  <span className="material-symbols-outlined text-[16px]">admin_panel_settings</span>
+                  Bootstrap Administrator
+                </div>
+                The workspace database currently has no users. Creating this first account grants Administrator
+                privileges to provision other roles.
+              </div>
+            )}
+
+            {showRegistrationNotice && (
+              <div className="mb-4 p-3 rounded-xl bg-surface-container-low border border-surface-container-high text-xs text-on-surface space-y-1 animate-in fade-in">
+                <div className="flex items-center gap-1.5 font-semibold text-primary">
+                  <span className="material-symbols-outlined text-[16px]">lock</span>
+                  Public Registration Disabled
+                </div>
+                <p className="text-on-surface-variant leading-relaxed">
+                  For compliance security, accounts must be created by an Administrator. If you need access,
+                  please ask your organization administrator to add your email.
+                </p>
+              </div>
+            )}
 
             {error && (
               <div
@@ -273,7 +281,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
               <div>
                 <label htmlFor="auth-username" className="block text-xs font-semibold text-on-surface mb-1.5">
-                  {mode === 'login' ? 'Username or email' : 'Username'}
+                  {mode === 'login' ? 'Username or email' : 'Admin Username'}
                 </label>
                 <input
                   id="auth-username"
@@ -285,15 +293,15 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                   spellCheck={false}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder={mode === 'login' ? 'your username or email' : 'e.g. priya.sharma'}
+                  placeholder={mode === 'login' ? 'Enter username or email' : 'e.g. admin.compliance'}
                   className={inputClass}
                 />
               </div>
 
-              {mode === 'register' && (
+              {mode === 'bootstrap' && (
                 <div>
                   <label htmlFor="auth-email" className="block text-xs font-semibold text-on-surface mb-1.5">
-                    Work email
+                    Admin Work Email
                   </label>
                   <input
                     id="auth-email"
@@ -303,7 +311,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@company.com"
+                    placeholder="admin@company.com"
                     className={inputClass}
                   />
                 </div>
@@ -322,7 +330,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={mode === 'register' ? 'At least 8 characters' : '••••••••'}
+                    placeholder={mode === 'bootstrap' ? 'Minimum 8 characters' : '••••••••'}
                     className={`${inputClass} pr-12`}
                   />
                   <button
@@ -338,13 +346,13 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </div>
               </div>
 
-              {mode === 'register' && (
+              {mode === 'bootstrap' && (
                 <div>
                   <label
                     htmlFor="auth-confirm-password"
                     className="block text-xs font-semibold text-on-surface mb-1.5"
                   >
-                    Confirm password
+                    Confirm Admin Password
                   </label>
                   <input
                     id="auth-confirm-password"
@@ -354,7 +362,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     autoComplete="new-password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter your password"
+                    placeholder="Re-enter password"
                     className={inputClass}
                   />
                 </div>
@@ -368,48 +376,35 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 {loading ? (
                   <>
                     <span className="w-4 h-4 rounded-full border-2 border-on-primary/30 border-t-on-primary animate-spin" />
-                    {mode === 'login' ? 'Signing in…' : 'Creating account…'}
+                    {mode === 'login' ? 'Signing in…' : 'Creating administrator…'}
                   </>
                 ) : (
                   <>
                     <span className="material-symbols-outlined text-[18px]">
-                      {mode === 'login' ? 'login' : 'person_add'}
+                      {mode === 'login' ? 'login' : 'verified_user'}
                     </span>
-                    {mode === 'login' ? 'Sign In' : 'Create Account'}
+                    {mode === 'login' ? 'Sign In to Desk' : 'Complete Setup & Enter Desk'}
                   </>
                 )}
               </button>
             </form>
 
-            <p className="mt-6 text-center text-[11px] leading-relaxed text-on-surface-variant">
-              {mode === 'login' ? (
-                <>
-                  New to the desk?{' '}
-                  <button
-                    type="button"
-                    onClick={() => switchMode('register')}
-                    className="font-semibold text-secondary hover:underline"
-                  >
-                    Create an account
-                  </button>
-                </>
-              ) : (
-                <>
-                  Already registered?{' '}
-                  <button
-                    type="button"
-                    onClick={() => switchMode('login')}
-                    className="font-semibold text-secondary hover:underline"
-                  >
-                    Sign in instead
-                  </button>
-                </>
-              )}
-            </p>
+            {mode === 'login' && !bootstrapRequired && (
+              <p className="mt-6 text-center text-[11px] leading-relaxed text-on-surface-variant">
+                Need an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowRegistrationNotice(!showRegistrationNotice)}
+                  className="font-semibold text-secondary hover:underline"
+                >
+                  Request access
+                </button>
+              </p>
+            )}
           </div>
 
           <p className="mt-5 text-center text-[10px] font-mono text-on-surface-variant/70">
-            Protected workspace · Authorised reviewers only
+            Protected workspace · Secure HttpOnly session · Role-based access
           </p>
         </div>
       </main>

@@ -11,6 +11,7 @@ interface HeaderProps {
   isOfflineMode: boolean;
   onToggleOffline: () => void;
   onOpenDbStatus: () => void;
+  onOpenUserManagement?: () => void;
   user: AuthUser;
   onLogout: () => void;
 }
@@ -23,12 +24,20 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   isOfflineMode,
   onOpenDbStatus,
+  onOpenUserManagement,
   user,
   onLogout
 }) => {
   const [profileOpen, setProfileOpen] = useState(false);
   const displayName = user.username;
   const initial = displayName.charAt(0).toUpperCase();
+
+  const roleLabel =
+    user.role === 'admin'
+      ? 'Administrator'
+      : user.role === 'approver'
+        ? 'Senior Approver'
+        : 'Brand Reviewer';
 
   const getScreenTitle = () => {
     switch (activeTab) {
@@ -183,7 +192,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {displayName}
               </span>
               <span className="text-[10px] text-on-surface-variant capitalize">
-                {user.role === 'admin' ? 'Administrator' : 'Brand Reviewer'}
+                {roleLabel}
               </span>
             </div>
             <span className="material-symbols-outlined text-[16px] text-on-surface-variant hidden lg:inline">
@@ -221,15 +230,28 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 </div>
                 <div className="pt-2 border-t border-surface-container-high space-y-1">
+                  {user.role === 'admin' && onOpenUserManagement && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenUserManagement();
+                        setProfileOpen(false);
+                      }}
+                      className="w-full text-left text-xs text-primary hover:underline font-semibold py-1 flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">manage_accounts</span>
+                      Manage Users & Roles
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       onOpenDbStatus();
                       setProfileOpen(false);
                     }}
-                    className="w-full text-left text-xs text-primary hover:underline font-semibold py-1"
+                    className="w-full text-left text-xs text-on-surface-variant hover:text-primary hover:underline font-medium py-1"
                   >
-                    Configure Storage & Offline Mode
+                    Storage & Database Status
                   </button>
                   <button
                     type="button"
