@@ -1,491 +1,707 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Brand } from '../data/mockData.js';
 
 interface InsightsAnalyticsProps {
   activeBrand: Brand;
-  onOpenPlannedModal: (title: string) => void;
+  brands?: Brand[];
+  onOpenPlannedModal?: (title: string) => void;
 }
 
 export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
   activeBrand,
-  onOpenPlannedModal
+  brands = []
 }) => {
-  const [timeframe, setTimeframe] = useState<'7d' | '30d' | 'q3' | 'ytd'>('30d');
-  const [advisoryDismissed, setAdvisoryDismissed] = useState(false);
-  const [exportState, setExportState] = useState<'idle' | 'compiling' | 'saved'>('idle');
+  const [selectedBrandId, setSelectedBrandId] = useState<string>('all');
+  const [selectedAgency, setSelectedAgency] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [timeframe, setTimeframe] = useState<string>('30d');
+  const [includeSample, setIncludeSample] = useState<boolean>(true);
 
-  // Multiplier adjustments for timeframe
-  const multiplier = timeframe === '7d' ? 0.25 : timeframe === 'q3' ? 2.8 : timeframe === 'ytd' ? 4.5 : 1;
-  const auditedAssets = Math.round(148 * multiplier);
-  const risksIntercepted = Math.round(42 * multiplier);
-  const firstPassRate = timeframe === '7d' ? 82.1 : timeframe === 'q3' ? 76.5 : 78.4;
-  const triageLag = timeframe === '7d' ? 11 : 14;
+  const [analytics, setAnalytics] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [exportState, setExportState] = useState<'idle' | 'downloading' | 'saved'>('idle');
 
-  const handleExport = () => {
-    setExportState('compiling');
-    setTimeout(() => {
-      setExportState('saved');
+  // Fetch genuine analytics from database API
+  const fetchAnalytics = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-      const data = {
-        title: `Compliance Analytics Audit - ${activeBrand.name}`,
-        timeframe,
-        scope: `${activeBrand.name} (${activeBrand.rulebookVersion})`,
-        generatedAt: new Date().toISOString(),
-        metrics: {
-          firstPassRate: `${firstPassRate}%`,
-          auditedAssets,
-          triageLag: `${triageLag} mins`,
-          risksIntercepted
-        },
-        topInfractions: [
-          { code: 'FB-012', title: 'Unsubstantiated Health Claims', share: '34%' },
-          { code: 'FB-019', title: 'Comparative Superlatives', share: '22%' },
-          { code: 'NT-008', title: 'Missing Pricing Disclaimer', share: '18%' },
-          { code: 'AF-014', title: 'Allergen Advisory Placement', share: '14%' },
-          { code: 'GN-003', title: 'Low Contrast Poster Text', share: '12%' }
-        ]
-      };
+      const params = new URLSearchParams();
+      if (selectedBrandId !== 'all') params.set('brand', selectedBrandId);
+      if (selectedAgency !== 'all') params.set('agency', selectedAgency);
+      if (selectedStatus !== 'all') params.set('status', selectedStatus);
+      if (timeframe !== 'all') params.set('timeframe', timeframe);
+      params.set('includeSample', String(includeSample));
 
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const res = await fetch(`/api/workspace/analytics?${params.toString()}`, {
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to load compliance analytics (HTTP ${res.status})`);
+      }
+
+      const data = await res.json();
+      setAnalytics(data);
+    } catch (err: any) {
+      setError(err.message || 'Error loading compliance analytics');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [selectedBrandId, selectedAgency, selectedStatus, timeframe, includeSample]);
+
+  // Export analytics as genuine CSV or JSON
+  const handleExport = async (format: 'json' | 'csv') => {
+    try {
+      setExportState('downloading');
+      const params = new URLSearchParams();
+      if (selectedBrandId !== 'all') params.set('brand', selectedBrandId);
+      if (selectedAgency !== 'all') params.set('agency', selectedAgency);
+      if (selectedStatus !== 'all') params.set('status', selectedStatus);
+      if (timeframe !== 'all') params.set('timeframe', timeframe);
+      params.set('includeSample', String(includeSample));
+      params.set('format', format);
+
+      const res = await fetch(`/api/workspace/analytics/export?${params.toString()}`, {
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        throw new Error(`Export failed (HTTP ${res.status})`);
+      }
+
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `compliance-analytics-${activeBrand.id}.json`;
+      a.download = `brand-compliance-analytics-${selectedBrandId}-${Date.now()}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
 
+      setExportState('saved');
       setTimeout(() => setExportState('idle'), 2500);
-    }, 700);
+    } catch (err: any) {
+      setError(err.message || 'Export error');
+      setExportState('idle');
+    }
   };
+
+  // Derive unique agencies from analytics or presets
+  const availableAgencies = Array.from(
+    new Set((analytics?.agencyScorecards || []).map((s: any) => s.agencyName))
+  ).filter(Boolean);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* 1. Control & Filter Bar */}
-      <section className="bg-surface-container-lowest p-5 rounded-2xl border border-surface-container-high shadow-sm space-y-3">
+      {/* 1. Header & Filter Bar */}
+      <section className="bg-surface-container-lowest p-5 rounded-2xl border border-surface-container-high shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="space-y-0.5">
             <h1 className="font-serif text-2xl sm:text-3xl font-medium text-primary tracking-tight">
-              Compliance Intelligence & Analytics
+              Compliance Intelligence & Agency Scorecards
             </h1>
             <p className="text-xs text-on-surface-variant">
-              Systemic policy infraction ledger, dual OCR-copy clearance ratios, and channel risk indices.
+              Database-backed audit metrics, agency performance scorecards, real turnaround speeds, and cross-brand comparisons.
             </p>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            {/* Timeframe Toggle */}
-            <div className="relative flex items-center bg-surface-container-low rounded-xl px-3 py-1.5 border border-surface-container-high shadow-xs">
-              <span className="material-symbols-outlined text-[16px] text-secondary mr-2">
-                calendar_today
-              </span>
-              <select
-                value={timeframe}
-                onChange={(e) => setTimeframe(e.target.value as any)}
-                className="bg-transparent font-sans text-xs font-semibold text-on-surface focus:outline-none appearance-none pr-6 cursor-pointer"
-              >
-                <option value="7d">Last 7 Days</option>
-                <option value="30d">Last 30 Days (Active)</option>
-                <option value="q3">Q3 Review Cycle</option>
-                <option value="ytd">Year-to-Date</option>
-              </select>
-              <span className="material-symbols-outlined text-[14px] text-on-surface-variant absolute right-2 pointer-events-none">
-                expand_more
-              </span>
-            </div>
-
-            {/* Export Report Button */}
+            {/* Export CSV */}
             <button
               type="button"
-              onClick={handleExport}
-              disabled={exportState !== 'idle'}
-              className="px-3.5 py-2 rounded-xl bg-primary text-on-primary text-xs font-semibold flex items-center gap-1.5 shadow-sm hover:bg-primary-container transition-all"
+              onClick={() => handleExport('csv')}
+              disabled={exportState !== 'idle' || loading || analytics?.insufficientData}
+              className="px-3 py-1.5 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface text-xs font-semibold flex items-center gap-1.5 border border-surface-container-high shadow-xs transition-all disabled:opacity-50"
+              title="Download filtered campaign audit ledger in CSV"
+            >
+              <span className="material-symbols-outlined text-[16px]">table_view</span>
+              <span>Export CSV</span>
+            </button>
+
+            {/* Export JSON */}
+            <button
+              type="button"
+              onClick={() => handleExport('json')}
+              disabled={exportState !== 'idle' || loading || analytics?.insufficientData}
+              className="px-3.5 py-1.5 rounded-xl bg-primary text-on-primary text-xs font-semibold flex items-center gap-1.5 shadow-sm hover:bg-primary-container transition-all disabled:opacity-50"
+              title="Download complete database analytics packet in JSON"
             >
               <span
                 className={`material-symbols-outlined text-[16px] ${
-                  exportState === 'compiling' ? 'animate-spin' : ''
+                  exportState === 'downloading' ? 'animate-spin' : ''
                 }`}
               >
-                {exportState === 'saved' ? 'check' : exportState === 'compiling' ? 'sync' : 'download'}
+                {exportState === 'saved' ? 'check' : exportState === 'downloading' ? 'sync' : 'download'}
               </span>
               <span>
-                {exportState === 'compiling'
-                  ? 'Compiling...'
+                {exportState === 'downloading'
+                  ? 'Compiling…'
                   : exportState === 'saved'
-                  ? 'Saved Report'
-                  : 'Export Ledger'}
+                  ? 'Saved'
+                  : 'Export JSON'}
               </span>
             </button>
           </div>
         </div>
 
-        {/* Active Corpus Scope Indicator */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-surface-container-high text-xs">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-secondary" />
-            <span className="text-on-surface-variant truncate font-mono text-[11px]">
-              Active Scope: <strong className="text-on-surface">{activeBrand.name}</strong> ({activeBrand.rulebookVersion})
-            </span>
+        {/* Multi-Dimensional Filter Controls */}
+        <div className="pt-2 border-t border-surface-container-high grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Brand Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-mono font-bold uppercase text-on-surface-variant">
+              Brand Filter
+            </label>
+            <select
+              value={selectedBrandId}
+              onChange={(e) => setSelectedBrandId(e.target.value)}
+              className="w-full text-xs bg-surface-container-low border border-surface-container-high rounded-xl px-2.5 py-1.5 text-on-surface font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer shadow-xs"
+            >
+              <option value="all">All Brands (Enterprise)</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
           </div>
-          <span className="font-mono text-[11px] text-secondary font-bold flex-shrink-0">
-            99.8% Parsed
-          </span>
-        </div>
-      </section>
 
-      {/* 2. Performance Ledger Metrics (2x2 Tactile Card Grid) */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* First-Pass Rate */}
-        <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
-          <div className="flex items-start justify-between">
-            <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
-              First-Pass Rate
-            </span>
-            <span className="inline-flex items-center gap-0.5 bg-secondary-container text-on-secondary-container px-1.5 py-0.5 rounded text-[10px] font-bold">
-              <span className="material-symbols-outlined text-[12px]">trending_up</span>+5.2%
-            </span>
+          {/* Agency Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-mono font-bold uppercase text-on-surface-variant">
+              Agency / Vendor
+            </label>
+            <select
+              value={selectedAgency}
+              onChange={(e) => setSelectedAgency(e.target.value)}
+              className="w-full text-xs bg-surface-container-low border border-surface-container-high rounded-xl px-2.5 py-1.5 text-on-surface font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer shadow-xs"
+            >
+              <option value="all">All Agencies</option>
+              {availableAgencies.map((ag: any) => (
+                <option key={ag} value={ag}>
+                  {ag}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="mt-3">
-            <div className="font-serif text-3xl sm:text-4xl text-primary font-medium tracking-tight">
-              {firstPassRate}%
-            </div>
-            <p className="text-xs text-outline mt-0.5">Approved without revision</p>
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
-            <div className="h-full bg-primary" style={{ width: `${firstPassRate}%` }} />
-          </div>
-        </div>
 
-        {/* Audited Assets */}
-        <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
-          <div className="flex items-start justify-between">
-            <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
-              Audited Assets
-            </span>
-            <span className="material-symbols-outlined text-[18px] text-outline">photo_library</span>
+          {/* Review Status Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-mono font-bold uppercase text-on-surface-variant">
+              Review Status
+            </label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="w-full text-xs bg-surface-container-low border border-surface-container-high rounded-xl px-2.5 py-1.5 text-on-surface font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer shadow-xs"
+            >
+              <option value="all">All Statuses</option>
+              <option value="approved">Approved</option>
+              <option value="in_review">In Review</option>
+              <option value="changes_requested">Changes Requested</option>
+              <option value="rejected">Rejected</option>
+              <option value="draft">Draft</option>
+            </select>
           </div>
-          <div className="mt-3">
-            <div className="font-serif text-3xl sm:text-4xl text-on-surface font-medium tracking-tight">
-              {auditedAssets}
-            </div>
-            <p className="text-xs text-outline mt-0.5">Across active channels</p>
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
-            <div className="h-full bg-secondary" style={{ width: '64%' }} />
-          </div>
-        </div>
 
-        {/* Avg Triage Lag */}
-        <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
-          <div className="flex items-start justify-between">
-            <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
-              Avg Triage Lag
-            </span>
-            <span className="material-symbols-outlined text-[18px] text-outline">speed</span>
+          {/* Timeframe Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-mono font-bold uppercase text-on-surface-variant">
+              Date Horizon
+            </label>
+            <select
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+              className="w-full text-xs bg-surface-container-low border border-surface-container-high rounded-xl px-2.5 py-1.5 text-on-surface font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer shadow-xs"
+            >
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="90d">Last 90 Days / Q3</option>
+              <option value="ytd">Year-to-Date</option>
+              <option value="all">All-Time Database History</option>
+            </select>
           </div>
-          <div className="mt-3">
-            <div className="flex items-baseline gap-1">
-              <span className="font-serif text-3xl sm:text-4xl text-on-surface font-medium tracking-tight">
-                {triageLag}
-              </span>
-              <span className="text-xs font-semibold text-on-surface-variant">mins</span>
-            </div>
-            <p className="text-xs text-outline mt-0.5">-6m vs Q2 benchmark</p>
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
-            <div className="h-full bg-primary-fixed-dim" style={{ width: '82%' }} />
-          </div>
-        </div>
 
-        {/* Risks Intercepted */}
-        <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
-          <div className="flex items-start justify-between">
-            <span className="font-mono text-[10px] text-error uppercase tracking-wider font-bold">
-              Risks Intercepted
-            </span>
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-error-container text-on-error-container text-xs font-bold">
-              !
-            </span>
-          </div>
-          <div className="mt-3">
-            <div className="font-serif text-3xl sm:text-4xl text-error font-medium tracking-tight">
-              {risksIntercepted}
-            </div>
-            <p className="text-xs text-outline mt-0.5">Pre-publication halts</p>
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
-            <div className="h-full bg-error" style={{ width: '42%' }} />
-          </div>
-        </div>
-      </section>
-
-      {/* 3. Editorial Action Advisory Banner */}
-      {!advisoryDismissed && (
-        <section className="bg-surface-container-low rounded-2xl p-5 border border-surface-container-high shadow-sm relative overflow-hidden">
-          <div className="flex gap-4 items-start">
-            <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 text-on-primary shadow-sm">
-              <span className="material-symbols-outlined text-[20px]">auto_fix_high</span>
-            </div>
-            <div className="flex-1 min-w-0 space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-bold text-secondary uppercase tracking-wider">
-                  Legal Counsel Intelligence Advisory
+          {/* Sample / Demo Segregation Toggle */}
+          <div className="space-y-1 flex flex-col justify-end">
+            <label className="text-[10px] font-mono font-bold uppercase text-on-surface-variant">
+              Sample Data Segregation
+            </label>
+            <button
+              type="button"
+              onClick={() => setIncludeSample(!includeSample)}
+              className={`w-full text-xs py-1.5 px-2.5 rounded-xl font-semibold border flex items-center justify-between gap-1 transition-colors shadow-xs ${
+                includeSample
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-900 dark:text-amber-200'
+                  : 'bg-surface-container border-surface-container-high text-on-surface-variant'
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[15px]">
+                  {includeSample ? 'filter_alt' : 'filter_alt_off'}
                 </span>
-                <span className="w-1 h-1 rounded-full bg-outline" />
-                <span className="text-[11px] text-on-surface-variant">Actionable</span>
+                <span>Include Demo Presets</span>
               </div>
-              <p className="text-xs text-on-surface leading-relaxed">
-                <strong className="text-primary font-bold">34% of creative rejections</strong> stem from unverified wellness efficacy terminology (<em className="font-serif text-primary">"detox"</em>, <em className="font-serif text-primary">"cure"</em>, <em className="font-serif text-primary">"miracle"</em>). Updating agency briefing guidelines could slash editorial review cycles by <strong className="text-primary font-bold">30%</strong>.
-              </p>
-              <div className="pt-2 flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  className="bg-primary text-on-primary text-xs font-semibold px-3 py-1.5 rounded-lg shadow-xs hover:bg-primary-container transition-colors"
-                >
-                  Export Redline Glossary
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAdvisoryDismissed(true)}
-                  className="text-xs text-secondary hover:text-on-surface px-2.5 py-1.5 rounded-lg hover:bg-surface-container transition-colors"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
+              <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-black/10">
+                {includeSample ? 'ON' : 'OFF'}
+              </span>
+            </button>
           </div>
-        </section>
+        </div>
+
+        {/* Data Segregation Banner */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                includeSample ? 'bg-amber-500' : 'bg-secondary'
+              }`}
+            />
+            <span className="text-on-surface-variant font-mono text-[11px]">
+              {includeSample ? (
+                <>
+                  Dataset includes <strong>{analytics?.sampleCampaignsCount ?? 0} sample / Wikimedia reference</strong> records and{' '}
+                  <strong>{analytics?.productionCampaignsCount ?? 0} production</strong> campaigns.
+                </>
+              ) : (
+                <>
+                  Segregated Mode Active: Displaying strictly <strong>production data ({analytics?.productionCampaignsCount ?? 0} records)</strong>. Demo presets excluded.
+                </>
+              )}
+            </span>
+          </div>
+
+          {loading && (
+            <span className="text-primary font-mono text-[11px] flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
+              Querying MongoDB…
+            </span>
+          )}
+        </div>
+      </section>
+
+      {/* Error Notice */}
+      {error && (
+        <div className="bg-error-container text-on-error-container p-4 rounded-2xl border border-error/30 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[20px]">error</span>
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={fetchAnalytics}
+            className="font-bold underline text-xs"
+          >
+            Retry Query
+          </button>
+        </div>
       )}
 
-      {/* 4. Infractions Ledger & Source Breakdown (Split View) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Frequent Rule Infractions Ledger */}
-        <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-serif text-xl font-medium text-primary">Rule Infraction Ledger</h2>
-              <p className="text-xs text-on-surface-variant">Ranked frequency across 112 defect tags</p>
-            </div>
-            <span className="font-mono text-xs text-secondary bg-surface-container-low px-2 py-0.5 rounded border border-surface-container-high">
-              Top 5
-            </span>
+      {/* Insufficient Data State */}
+      {analytics?.insufficientData ? (
+        <section className="bg-surface-container-lowest rounded-2xl p-8 border border-surface-container-high shadow-sm text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-surface-container mx-auto flex items-center justify-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-[32px]">query_stats</span>
           </div>
-
-          <div className="space-y-3.5 pt-1">
-            {[
-              { id: 'FB-012', title: 'Unsubstantiated Health Claims', share: 34, count: 38, color: 'bg-error' },
-              { id: 'FB-019', title: 'Comparative Superlatives', share: 22, count: 25, color: 'bg-secondary' },
-              { id: 'NT-008', title: 'Missing Pricing Asterisk / Disclaimer', share: 18, count: 20, color: 'bg-primary-container' },
-              { id: 'AF-014', title: 'Allergen Advisory Placement', share: 14, count: 16, color: 'bg-outline' },
-              { id: 'GN-003', title: 'Low Contrast Poster Text (OCR)', share: 12, count: 13, color: 'bg-outline-variant' }
-            ].map((item, idx) => (
-              <div key={item.id} className="space-y-1">
-                <div className="flex items-baseline justify-between text-xs">
-                  <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <span className="font-mono text-[11px] text-on-surface-variant flex-shrink-0">
-                      0{idx + 1}
-                    </span>
-                    <span className="font-semibold text-on-surface truncate">{item.title}</span>
-                    <span className="font-mono text-[10px] text-outline flex-shrink-0 bg-surface-container px-1.5 py-0.2 rounded font-bold">
-                      {item.id}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-1.5 flex-shrink-0 font-mono">
-                    <span className="font-bold text-on-surface">{item.share}%</span>
-                    <span className="text-[10px] text-outline">({item.count}×)</span>
-                  </div>
-                </div>
-                <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
-                  <div className={`h-full ${item.color} rounded-full`} style={{ width: `${item.share}%` }} />
-                </div>
-              </div>
-            ))}
+          <div className="space-y-1 max-w-lg mx-auto">
+            <h2 className="font-serif text-xl font-medium text-on-surface">
+              Insufficient Data for Selected Filters
+            </h2>
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              {analytics.message} No simulated or synthetic numbers are generated.
+            </p>
+          </div>
+          <div className="pt-2 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedBrandId('all');
+                setSelectedAgency('all');
+                setSelectedStatus('all');
+                setTimeframe('all');
+                setIncludeSample(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-semibold shadow-xs hover:bg-primary-container transition-colors"
+            >
+              Reset Filters to All Records
+            </button>
           </div>
         </section>
-
-        {/* Detection Source Breakdown & Proof Cards */}
-        <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
-          <div>
-            <h2 className="font-serif text-xl font-medium text-primary">Detection Source Distribution</h2>
-            <p className="text-xs text-on-surface-variant">Dual visual-copy inspection engines are mandatory</p>
-          </div>
-
-          {/* Segmented Split Gauge Bar */}
-          <div className="space-y-2">
-            <div className="h-4 w-full rounded-lg overflow-hidden flex bg-surface-container">
-              <div
-                className="h-full bg-primary flex items-center justify-center text-[10px] text-on-primary font-mono font-bold"
-                style={{ width: '56%' }}
-              >
-                56%
-              </div>
-              <div
-                className="h-full bg-secondary flex items-center justify-center text-[10px] text-on-secondary font-mono font-bold"
-                style={{ width: '44%' }}
-              >
-                44%
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 text-xs pt-1">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-primary flex-shrink-0" />
-                <div>
-                  <div className="font-semibold text-on-surface">Caption & Body Copy</div>
-                  <span className="text-[11px] text-outline font-mono">56% of total flagged rules</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-left sm:text-right">
-                <div>
-                  <div className="font-semibold text-on-surface">Poster Artwork OCR</div>
-                  <span className="text-[11px] text-outline font-mono">44% baked into imagery</span>
-                </div>
-                <div className="w-3 h-3 rounded bg-secondary flex-shrink-0" />
-              </div>
-            </div>
-          </div>
-
-          {/* Contextual Asset Proof Cards */}
-          <div className="pt-2 grid grid-cols-2 gap-3">
-            <div className="bg-surface-container-low rounded-xl p-2.5 border border-surface-container-high space-y-2">
-              <div className="relative w-full h-24 rounded-lg overflow-hidden bg-surface-container">
-                <img
-                  src="/assets/aistudio/screen_81b71146.png"
-                  alt="Packaging label"
-                  className="w-full h-full object-cover"
-                />
-                <span className="absolute top-1.5 left-1.5 bg-inverse-surface/90 text-inverse-on-surface font-mono text-[10px] px-1.5 py-0.5 rounded">
-                  OCR: FB-012
+      ) : (
+        <>
+          {/* 2. Real Database Performance Ledger Metrics */}
+          <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Approval Rate */}
+            <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="flex items-start justify-between">
+                <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
+                  Review Approval Rate
+                </span>
+                <span className="material-symbols-outlined text-[18px] text-secondary">
+                  verified
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-on-surface truncate">Revive Avocado Glow</span>
-                <span className="text-error font-mono text-[11px] font-bold">Flagged</span>
+              <div className="mt-3">
+                <div className="font-serif text-3xl sm:text-4xl text-primary font-medium tracking-tight">
+                  {analytics?.outcomes?.approvalRate ?? 0}%
+                </div>
+                <p className="text-xs text-outline mt-0.5 font-mono text-[11px]">
+                  {analytics?.outcomes?.approved ?? 0} approved /{' '}
+                  {(analytics?.outcomes?.approved ?? 0) + (analytics?.outcomes?.rejected ?? 0)} decided
+                </p>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
+                <div
+                  className="h-full bg-primary"
+                  style={{ width: `${Math.min(100, analytics?.outcomes?.approvalRate || 0)}%` }}
+                />
               </div>
             </div>
 
-            <div className="bg-surface-container-low rounded-xl p-2.5 border border-surface-container-high space-y-2">
-              <div className="relative w-full h-24 rounded-lg overflow-hidden bg-surface-container">
-                <img
-                  src="/assets/aistudio/screen_d1dae6af.png"
-                  alt="Harvest proof"
-                  className="w-full h-full object-cover"
-                />
-                <span className="absolute top-1.5 left-1.5 bg-inverse-surface/90 text-inverse-on-surface font-mono text-[10px] px-1.5 py-0.5 rounded">
-                  Copy: AF-014
+            {/* Total Audited Campaigns */}
+            <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="flex items-start justify-between">
+                <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
+                  Audited Campaigns
+                </span>
+                <span className="material-symbols-outlined text-[18px] text-outline">photo_library</span>
+              </div>
+              <div className="mt-3">
+                <div className="font-serif text-3xl sm:text-4xl text-on-surface font-medium tracking-tight">
+                  {analytics?.totalCampaigns ?? 0}
+                </div>
+                <p className="text-xs text-outline mt-0.5 font-mono text-[11px]">
+                  {analytics?.productionCampaignsCount ?? 0} prod • {analytics?.sampleCampaignsCount ?? 0} sample
+                </p>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
+                <div className="h-full bg-secondary" style={{ width: '100%' }} />
+              </div>
+            </div>
+
+            {/* Genuine Turnaround Time */}
+            <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="flex items-start justify-between">
+                <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
+                  Avg Turnaround Speed
+                </span>
+                <span className="material-symbols-outlined text-[18px] text-outline">speed</span>
+              </div>
+              <div className="mt-3">
+                <div className="font-serif text-3xl sm:text-4xl text-on-surface font-medium tracking-tight">
+                  {analytics?.turnaround?.averageDisplay ?? 'No data'}
+                </div>
+                <p className="text-xs text-outline mt-0.5 font-mono text-[11px]">
+                  {analytics?.turnaround?.completedReviewsCount
+                    ? `${analytics.turnaround.completedReviewsCount} completed review audits`
+                    : 'Awaiting first completed review'}
+                </p>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
+                <div className="h-full bg-primary-fixed-dim" style={{ width: '70%' }} />
+              </div>
+            </div>
+
+            {/* Critical Intercepts & Resolution */}
+            <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-surface-container-high shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="flex items-start justify-between">
+                <span className="font-mono text-[10px] text-error uppercase tracking-wider font-bold">
+                  Critical Risks
+                </span>
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-error-container text-on-error-container text-xs font-bold">
+                  !
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-on-surface truncate">Harvest Feast Promo</span>
-                <span className="text-secondary font-mono text-[11px] font-bold">Cleared</span>
+              <div className="mt-3">
+                <div className="font-serif text-3xl sm:text-4xl text-error font-medium tracking-tight">
+                  {analytics?.findingsSummary?.critical ?? 0}
+                </div>
+                <p className="text-xs text-outline mt-0.5 font-mono text-[11px]">
+                  {analytics?.findingsSummary?.resolutionRate ?? 100}% finding resolution rate
+                </p>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">
+                <div className="h-full bg-error" style={{ width: `${Math.min(100, analytics?.findingsSummary?.critical ? 50 : 0)}%` }} />
               </div>
             </div>
-          </div>
-        </section>
-      </div>
+          </section>
 
-      {/* 5. Channel Risk Index */}
-      <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-serif text-xl font-medium text-primary">Channel Risk Index</h2>
-            <p className="text-xs text-on-surface-variant">Compliance clearance rate by marketing distribution surface</p>
-          </div>
-          <span className="material-symbols-outlined text-[20px] text-on-surface-variant">share</span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Instagram / TikTok */}
-          <div className="bg-surface-container-low p-4 rounded-xl border border-surface-container-high flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center flex-shrink-0 text-on-surface">
-                <span className="material-symbols-outlined text-[18px]">smartphone</span>
+          {/* 3. Agency Compliance Scorecards (Real Database-Backed Matrix) */}
+          <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-serif text-xl font-medium text-primary">
+                  Agency Compliance Scorecards
+                </h2>
+                <p className="text-xs text-on-surface-variant">
+                  Vendor accountability metrics calculated directly from database records
+                </p>
               </div>
-              <div className="min-w-0">
-                <span className="text-xs font-bold text-on-surface block truncate">Instagram & TikTok</span>
-                <span className="text-[11px] text-error font-medium">Highest Risk: Exaggerated Copy</span>
+              <span className="font-mono text-xs text-secondary bg-surface-container-low px-2 py-0.5 rounded border border-surface-container-high">
+                {analytics?.agencyScorecards?.length ?? 0} Partner Cohorts
+              </span>
+            </div>
+
+            {analytics?.agencyScorecards && analytics.agencyScorecards.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-surface-container-high text-on-surface-variant font-mono uppercase text-[10px]">
+                      <th className="py-2.5 px-3">Agency Partner</th>
+                      <th className="py-2.5 px-3 text-center">Campaigns</th>
+                      <th className="py-2.5 px-3 text-center">Approval Rate</th>
+                      <th className="py-2.5 px-3 text-center">Critical Finding Rate</th>
+                      <th className="py-2.5 px-3 text-center">Avg Turnaround</th>
+                      <th className="py-2.5 px-3 text-right">Grade</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-container-high">
+                    {analytics.agencyScorecards.map((scorecard: any) => (
+                      <tr key={scorecard.agencyName} className="hover:bg-surface-container-low transition-colors">
+                        <td className="py-3 px-3 font-semibold text-on-surface flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-secondary">
+                            business
+                          </span>
+                          <span>{scorecard.agencyName}</span>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-medium">
+                          {scorecard.campaignsHandled}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-medium">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              scorecard.approvalRate >= 80
+                                ? 'bg-secondary/15 text-secondary'
+                                : scorecard.approvalRate >= 60
+                                ? 'bg-primary/15 text-primary'
+                                : 'bg-error-container text-on-error-container'
+                            }`}
+                          >
+                            {scorecard.approvalRate}%
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-medium">
+                          <span
+                            className={`text-[11px] ${
+                              scorecard.criticalFindingsRate > 0 ? 'text-error font-bold' : 'text-on-surface-variant'
+                            }`}
+                          >
+                            {scorecard.criticalFindingsRate}% ({scorecard.criticalFindings} critical)
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-on-surface-variant">
+                          {scorecard.averageTurnaroundMinutes !== null
+                            ? `${scorecard.averageTurnaroundMinutes} mins`
+                            : 'Pending decisions'}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <span
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-mono font-bold ${
+                              scorecard.grade === 'A'
+                                ? 'bg-secondary text-on-secondary'
+                                : scorecard.grade === 'B'
+                                ? 'bg-primary text-on-primary'
+                                : scorecard.grade === 'C'
+                                ? 'bg-error-container text-on-error-container'
+                                : 'bg-surface-container text-on-surface-variant'
+                            }`}
+                          >
+                            Grade: {scorecard.grade}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
-            <div className="text-right flex-shrink-0 pl-2">
-              <div className="font-serif text-xl text-error font-bold">68%</div>
-              <span className="text-[10px] text-outline font-mono">Clearance</span>
-            </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-surface-container-low border border-surface-container-high text-xs text-on-surface-variant">
+                No agency attribution data recorded yet. Assign agencies when uploading or editing campaigns.
+              </div>
+            )}
+          </section>
+
+          {/* 4. Cross-Brand Comparison & Infractions (Split View) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Cross-Brand Comparison */}
+            <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-serif text-xl font-medium text-primary">Cross-Brand Benchmark</h2>
+                  <p className="text-xs text-on-surface-variant">Compliance clearance across brand portfolios</p>
+                </div>
+                <span className="material-symbols-outlined text-[20px] text-on-surface-variant">
+                  compare_arrows
+                </span>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                {analytics?.crossBrandComparison?.map((brandMetric: any) => (
+                  <div key={brandMetric.brandId} className="p-3 rounded-xl bg-surface-container-low border border-surface-container-high space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-on-surface">{brandMetric.brandName}</span>
+                        <span className="font-mono text-[10px] text-outline">
+                          ({brandMetric.totalCampaigns} campaigns)
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-primary">
+                        {brandMetric.approvalRate}% Clearance
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
+                      <span>Total Findings: {brandMetric.totalFindings}</span>
+                      <span>Frequency: {brandMetric.findingFrequency} / campaign</span>
+                    </div>
+
+                    <div className="h-1.5 w-full bg-surface-container rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full"
+                        style={{ width: `${Math.min(100, brandMetric.approvalRate || 0)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Top Infractions Ledger */}
+            <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-serif text-xl font-medium text-primary">Frequent Defect Ledger</h2>
+                  <p className="text-xs text-on-surface-variant">Top recurring brand policy infractions</p>
+                </div>
+                <span className="font-mono text-xs text-secondary bg-surface-container-low px-2 py-0.5 rounded border border-surface-container-high">
+                  Top 5 Infractions
+                </span>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                {analytics?.topInfractions && analytics.topInfractions.length > 0 ? (
+                  analytics.topInfractions.map((item: any) => (
+                    <div key={item.id} className="space-y-1">
+                      <div className="flex items-baseline justify-between text-xs">
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="font-mono text-[11px] text-on-surface-variant flex-shrink-0">
+                            0{item.rank}
+                          </span>
+                          <span className="font-semibold text-on-surface truncate">{item.title}</span>
+                          <span className="font-mono text-[10px] text-outline flex-shrink-0 bg-surface-container px-1.5 py-0.2 rounded font-bold">
+                            {item.id}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline gap-1.5 flex-shrink-0 font-mono">
+                          <span className="font-bold text-on-surface">{item.share}%</span>
+                          <span className="text-[10px] text-outline">({item.count}×)</span>
+                        </div>
+                      </div>
+                      <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-error rounded-full"
+                          style={{ width: `${Math.min(100, item.share || 0)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-on-surface-variant py-4 text-center">
+                    No infractions recorded in this timeframe. All assets fully compliant!
+                  </p>
+                )}
+              </div>
+            </section>
           </div>
 
-          {/* Paid Display Ads */}
-          <div className="bg-surface-container-low p-4 rounded-xl border border-surface-container-high flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center flex-shrink-0 text-on-surface">
-                <span className="material-symbols-outlined text-[18px]">ad_units</span>
+          {/* 5. Dual Detection Source Split & Channel Clearance */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Detection Source Split */}
+            <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
+              <div>
+                <h2 className="font-serif text-xl font-medium text-primary">Detection Source Distribution</h2>
+                <p className="text-xs text-on-surface-variant">Dual visual-copy inspection distribution</p>
               </div>
-              <div className="min-w-0">
-                <span className="text-xs font-bold text-on-surface block truncate">Paid Display Ads</span>
-                <span className="text-[11px] text-on-surface-variant">Moderate Disclaimer Gaps</span>
+
+              <div className="space-y-2">
+                <div className="h-4 w-full rounded-lg overflow-hidden flex bg-surface-container">
+                  <div
+                    className="h-full bg-primary flex items-center justify-center text-[10px] text-on-primary font-mono font-bold"
+                    style={{ width: `${analytics?.findingsSummary?.copyShare ?? 50}%` }}
+                  >
+                    {analytics?.findingsSummary?.copyShare ?? 50}%
+                  </div>
+                  <div
+                    className="h-full bg-secondary flex items-center justify-center text-[10px] text-on-secondary font-mono font-bold"
+                    style={{ width: `${analytics?.findingsSummary?.ocrShare ?? 50}%` }}
+                  >
+                    {analytics?.findingsSummary?.ocrShare ?? 50}%
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 text-xs pt-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded bg-primary flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold text-on-surface">Caption & Body Copy</div>
+                      <span className="text-[11px] text-outline font-mono">
+                        {analytics?.findingsSummary?.copyShare ?? 50}% of flagged rules
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-left sm:text-right">
+                    <div>
+                      <div className="font-semibold text-on-surface">Artwork OCR Extraction</div>
+                      <span className="text-[11px] text-outline font-mono">
+                        {analytics?.findingsSummary?.ocrShare ?? 50}% baked into imagery
+                      </span>
+                    </div>
+                    <div className="w-3 h-3 rounded bg-secondary flex-shrink-0" />
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="text-right flex-shrink-0 pl-2">
-              <div className="font-serif text-xl text-on-surface font-bold">81%</div>
-              <span className="text-[10px] text-outline font-mono">Clearance</span>
-            </div>
-          </div>
+            </section>
 
-          {/* Print & Packaging */}
-          <div className="bg-surface-container-low p-4 rounded-xl border border-surface-container-high flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center flex-shrink-0 text-on-surface">
-                <span className="material-symbols-outlined text-[18px]">print</span>
+            {/* Channel Clearance Rate */}
+            <section className="bg-surface-container-lowest rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm space-y-4">
+              <div>
+                <h2 className="font-serif text-xl font-medium text-primary">Channel Risk Index</h2>
+                <p className="text-xs text-on-surface-variant">Compliance clearance rate by marketing distribution surface</p>
               </div>
-              <div className="min-w-0">
-                <span className="text-xs font-bold text-on-surface block truncate">Print & Packaging</span>
-                <span className="text-[11px] text-secondary font-medium">Pre-vetted in R&D cycle</span>
+
+              <div className="space-y-2.5">
+                {analytics?.channelRiskIndex && analytics.channelRiskIndex.length > 0 ? (
+                  analytics.channelRiskIndex.map((ch: any) => (
+                    <div key={ch.channel} className="p-3 rounded-xl bg-surface-container-low border border-surface-container-high flex items-center justify-between gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-on-surface block">{ch.channel}</span>
+                        <span className="text-[11px] text-on-surface-variant font-mono">
+                          {ch.totalCampaigns} campaigns • {ch.totalFindings} findings
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-serif text-lg font-bold text-primary">
+                          {ch.clearanceRate}%
+                        </span>
+                        <span className="text-[10px] text-outline block font-mono">Clearance</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-on-surface-variant py-2">
+                    No channel data available for selected filter range.
+                  </p>
+                )}
               </div>
-            </div>
-            <div className="text-right flex-shrink-0 pl-2">
-              <div className="font-serif text-xl text-primary font-bold">92%</div>
-              <span className="text-[10px] text-outline font-mono">Clearance</span>
-            </div>
+            </section>
           </div>
-        </div>
-      </section>
-
-      {/* 6. Planned Roadmap Module: v2.6 Capabilities */}
-      <section
-        onClick={() => onOpenPlannedModal('Agency Scorecards & Cross-Brand Compliance Benchmarking')}
-        className="bg-surface-container-low rounded-2xl p-5 sm:p-6 border border-surface-container-high shadow-sm cursor-pointer hover:bg-surface-container transition-all space-y-2"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-secondary">compass_calibration</span>
-            <span className="font-mono text-xs text-secondary uppercase font-bold tracking-wider">
-              Roadmap Intelligence
-            </span>
-          </div>
-          <span className="font-mono text-[11px] text-on-primary bg-primary px-2.5 py-0.5 rounded shadow-xs">
-            Planned v2.6
-          </span>
-        </div>
-
-        <h3 className="font-serif text-lg font-medium text-on-surface pt-1">
-          Agency Scorecards & Cross-Brand Compliance Benchmarking
-        </h3>
-        <p className="text-xs text-on-surface-variant leading-relaxed">
-          Automated vendor accountability matrices to score agency roster performance, recurring violation rates, and turnaround speeds across external design partners.
-        </p>
-
-        {/* Locked Card Mockup Preview */}
-        <div className="mt-3 bg-surface-container-lowest p-3 rounded-xl border border-surface-container-high flex flex-wrap items-center justify-between gap-2 opacity-80">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="material-symbols-outlined text-outline text-[22px] flex-shrink-0">lock_clock</span>
-            <div className="flex flex-col text-xs min-w-0">
-              <span className="font-bold text-on-surface">Creative Agency Alpha (Grade: B+)</span>
-              <span className="text-outline text-[11px]">Cohort parity vs Arka Foods & NovaTech</span>
-            </div>
-          </div>
-          <span className="text-[11px] font-mono font-semibold text-secondary bg-secondary-container/60 px-2.5 py-1 rounded">
-            Beta Invite
-          </span>
-        </div>
-      </section>
+        </>
+      )}
     </div>
   );
 };

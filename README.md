@@ -64,6 +64,44 @@ The migration script is idempotent: it parses valid base64 image strings, checks
 
 ---
 
+### 4. Review Workflow, Co-Approval & Event Audit Trail
+- **Workflow State Machine:** Governs transitions between clear states: `draft` → `in_review` → `changes_requested` / `approved` / `rejected`. Re-opening approved reviews is restricted to administrators.
+- **Role-Enforced Transitions:** Reviewers can submit campaigns for review and request revisions; approvers and administrators execute final approval or rejection.
+- **Co-Approval & Self-Approval Prevention:** Users who created or submitted a campaign cannot approve their own work unless an explicit administrator policy permits it.
+- **Critical Finding Override Justification:** Approving a creative with open critical compliance findings strictly requires a written override reason, which is permanently saved on the campaign and logged as a distinct audit event.
+- **Idempotent Chronological Event Logging:** Every state transition, comment, submission, and sign-off generates an event in MongoDB `events` collection (`campaignId`, `user`, `actionType`, `timestamp`, `details`). Network retries with `idempotencyKey` return existing events without duplicating records.
+- **Review Audit Export:** Users can download the complete review audit trail in structured JSON via `GET /api/workspace/campaigns/:id/export`.
+
+---
+
+### 5. Platform Safe-Zone & Visual Layout Guidance
+- **Verified Platform Specifications:** Verified specifications for Instagram (Reels 9:16, Feed Portrait 4:5, Square 1:1), TikTok (In-Feed Video 9:16), YouTube (Shorts 9:16), and LinkedIn (Single Image 1.91:1, Square 1:1) stored in `src/data/platformSpecs.json`.
+- **Official Documentation Sources & Verification Dates:** Every platform format specification includes its official documentation URL (e.g. Meta Business Help Center, TikTok for Business, YouTube Help, LinkedIn Marketing Solutions) and verification date (`2026-02-15`).
+- **Asset Dimension & Aspect-Ratio Comparison:** Inspects actual image width, height, and aspect ratio, comparing against recommended format targets:
+  - Exact Specification Match
+  - Aspect Ratio Matches Target
+  - Aspect Ratio Mismatch (with warning of letterboxing/pillarboxing)
+  - Unsupported / Custom Format handling without breaking
+- **Visual Safe-Zone Overlays:** Semi-transparent tinted overlays visually demarcate areas obscured by platform UI elements (camera buttons, right-side action rails, bottom captions, and CTA buttons). Users can toggle overlays ON or OFF.
+- **Obscured Region Detection:** Cross-references OCR bounding boxes and open compliance claims with platform safe zones to warn reviewers when disclaimers or logos fall into obscured interface zones.
+- **Layout Guidance & Transparency Disclaimer:**
+  > *Platform safe-zone analysis provides layout guidance based on official creative guidelines (verified 2026-02-15) and does not guarantee final platform rendering across all client device viewports.*
+
+---
+
+### 6. Database-Backed Agency Scorecards & Analytics
+- **Zero Synthetic Numbers:** Replaced simulated multipliers with real-time aggregation queries against saved MongoDB campaign and event records.
+- **Key Compliance Metrics:** Computes total campaigns, review outcomes (approval rate, rejection rate), finding resolution rate, and dual detection distribution (caption copy vs artwork OCR).
+- **Turnaround Time from Real Timestamps:** Measures true elapsed duration between review submission events and final approval/rejection timestamps, calculating average turnaround speed.
+- **Multi-Dimensional Filters:** Filter analytics by Brand, Agency, Review Status, and Date Horizon (`7d`, `30d`, `90d`, `ytd`, `all`).
+- **Sample vs Real Data Segregation:** Distinct toggle to include or exclude sample / demo presets (such as Wikimedia Commons references). Clearly displays counts of sample vs production records.
+- **Agency Compliance Scorecards:** Evaluates vendor agency rosters on campaigns handled, approval rate, critical finding rate, and average turnaround time, assigning performance grades (A, B, C, Pending).
+- **Cross-Brand Benchmarking:** Compares compliance clearance rates and defect frequencies across brand portfolios.
+- **Graceful Insufficient Data State:** When zero records match filters, clearly explains that data is limited and provides guidance rather than fabricating fake statistics.
+- **Authentic CSV and JSON Export:** Dedicated export endpoints (`GET /api/workspace/analytics/export?format=csv` and `format=json`) generate downloadable audit ledgers.
+
+---
+
 ## Configuration & Environment Variables
 
 Create a private `.env` file in the project root. **Never commit `.env` or credentials to source control.**
@@ -137,3 +175,6 @@ The test runner utilizes `tsx --test` to execute:
 - `tests/auth.test.ts`: Admin bootstrap, login rate limiting, session cookies, CSRF protection, RBAC permission enforcement, and account disabling.
 - `tests/storage.test.ts`: Magic byte detection, GridFS upload/retrieval, size limits, unauthorized rejection, and Wikimedia Commons preservation.
 - `tests/ocr.test.ts`: Tesseract OCR extraction, genuine confidence scoring, percentage bounding-box scaling, SSRF URL restrictions, MongoDB text persistence, and user correction re-auditing.
+- `tests/workflow.test.ts`: Workflow state machine transitions, role permissions, self-approval policy restrictions, critical finding override reasons, chronological audit event persistence, idempotency, and review export.
+- `tests/safeZone.test.ts`: Platform format specifications, official documentation links, verified dates, dimension and aspect ratio comparison, safe-zone coordinate scaling, obscured region detection, and unsupported format handling.
+- `tests/analytics.test.ts`: Database metrics calculation, genuine turnaround times from real timestamps, multi-dimensional filtering, sample/demo segregation, empty/insufficient data states, agency scorecards, and CSV/JSON export.

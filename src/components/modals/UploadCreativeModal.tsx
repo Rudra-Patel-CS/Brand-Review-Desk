@@ -23,6 +23,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   onAddCampaign
 }) => {
   const [title, setTitle] = useState('');
+  const [agency, setAgency] = useState('');
   const [selectedBrandId, setSelectedBrandId] = useState(activeBrand.id);
   const [channel, setChannel] = useState('IG / TikTok Reels (9:16)');
   const [format, setFormat] = useState('Short-Form Video Ad');
@@ -156,6 +157,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         title: title.trim() || 'Untitled Campaign Asset',
         brandId: brand.id,
         brandName: brand.name,
+        agency: agency.trim() || undefined,
         channel,
         format,
         aspectRatio: '4/5',
@@ -257,6 +259,20 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
               placeholder="e.g. Summer Spark Energy Launch"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest"
+            />
+          </div>
+
+          {/* Agency Attribution */}
+          <div>
+            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
+              Creative Agency / Vendor Partner (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Vanguard Creative, PixelCraft Studio, or In-House"
+              value={agency}
+              onChange={(e) => setAgency(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest"
             />
           </div>

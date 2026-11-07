@@ -16,6 +16,7 @@ const auth = require('./auth');
 const storage = require('./storage');
 const ocrEngine = require('./ocrEngine');
 const workflow = require('./workflow');
+const analytics = require('./analytics');
 const multer = require('multer');
 
 const upload = multer({
@@ -834,6 +835,65 @@ app.get('/api/workspace/campaigns/:id/export', requireAuth, async (req, res) => 
       `attachment; filename="review-audit-${campaign.code || campaign.id}.json"`
     );
     res.json(exportRecord);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Workspace Analytics Endpoints ──────────────────────────────────────────────
+app.get('/api/workspace/analytics', requireAuth, async (req, res) => {
+  try {
+    const database = await db.connectDB();
+    const result = await analytics.calculateAnalytics({
+      database,
+      memoryStore: db.memoryStore,
+      filters: {
+        brand: req.query.brand,
+        agency: req.query.agency,
+        status: req.query.status,
+        timeframe: req.query.timeframe,
+        includeSample: req.query.includeSample
+      }
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/workspace/analytics/export', requireAuth, async (req, res) => {
+  try {
+    const database = await db.connectDB();
+    const result = await analytics.calculateAnalytics({
+      database,
+      memoryStore: db.memoryStore,
+      filters: {
+        brand: req.query.brand,
+        agency: req.query.agency,
+        status: req.query.status,
+        timeframe: req.query.timeframe,
+        includeSample: req.query.includeSample
+      }
+    });
+
+    const format = String(req.query.format || 'json').toLowerCase();
+    if (format === 'csv') {
+      const csv = analytics.generateAnalyticsCsv(result);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="brand-compliance-analytics-${Date.now()}.csv"`
+      );
+      return res.send(csv);
+    }
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="brand-compliance-analytics-${Date.now()}.json"`
+    );
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

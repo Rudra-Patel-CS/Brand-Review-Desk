@@ -501,6 +501,7 @@ export default function App() {
         {activeTab === 'insights' && (
           <InsightsAnalytics
             activeBrand={activeBrand}
+            brands={brands}
             onOpenPlannedModal={(title) => {
               setPlannedTitle(title);
               setIsPlannedOpen(true);
