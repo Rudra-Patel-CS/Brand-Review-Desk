@@ -13,6 +13,13 @@ require('dotenv').config();
 
 const db = require('./db');
 const auth = require('./auth');
+const storage = require('./storage');
+const multer = require('multer');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: storage.MAX_FILE_SIZE }
+});
 
 const app = express();
 // Render provides PORT for the public web service. Keep BACKEND_PORT as a
@@ -456,6 +463,102 @@ app.patch('/api/users/:id', requireAuth, requireRole([auth.ROLES.ADMIN]), async 
       user: auth.normalizeUser(updated),
       message: `User ${updated.username} updated.`
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GridFS Asset Storage Endpoints ───────────────────────────────────────────
+
+// Authenticated image upload to MongoDB GridFS
+app.post('/api/assets/upload', requireAuth, (req, res) => {
+  upload.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: `File size exceeds maximum limit of 15MB.` });
+      }
+      return res.status(400).json({ error: err.message || 'File upload error.' });
+    }
+
+    try {
+      let buffer = null;
+      let filename = null;
+
+      if (req.file) {
+        buffer = req.file.buffer;
+        filename = req.file.originalname;
+      } else if (req.body && req.body.data) {
+        // Base64 payload support
+        const rawData = String(req.body.data);
+        const match = rawData.match(/^data:(image\/[a-zA-Z0-9.+_-]+);base64,(.+)$/);
+        if (match) {
+          buffer = Buffer.from(match[2], 'base64');
+        } else {
+          buffer = Buffer.from(rawData, 'base64');
+        }
+        filename = req.body.filename || `asset-${Date.now()}.png`;
+      }
+
+      if (!buffer || buffer.length === 0) {
+        return res.status(400).json({ error: 'No image file or data provided.' });
+      }
+
+      const database = await db.connectDB();
+      const savedAsset = await storage.storeImage(buffer, {
+        filename,
+        uploadedBy: req.user.username,
+        database,
+        memoryStore: db.memoryStore
+      });
+
+      return res.status(201).json({
+        success: true,
+        assetId: savedAsset.assetId,
+        url: savedAsset.url,
+        filename: savedAsset.filename,
+        mimeType: savedAsset.mimeType,
+        size: savedAsset.size,
+        metadata: savedAsset.metadata
+      });
+    } catch (uploadErr) {
+      if (uploadErr.code === 'LIMIT_FILE_SIZE' || uploadErr.code === 'INVALID_IMAGE_CONTENT') {
+        return res.status(400).json({ error: uploadErr.message });
+      }
+      console.error('Image store error:', uploadErr.message);
+      return res.status(500).json({ error: uploadErr.message || 'Could not store image.' });
+    }
+  });
+});
+
+// Access-controlled asset retrieval endpoint
+app.get('/api/assets/:id', requireAuth, async (req, res) => {
+  try {
+    const assetId = req.params.id;
+    const database = await db.connectDB();
+    const asset = await storage.getAsset(assetId, { database, memoryStore: db.memoryStore });
+
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found.' });
+    }
+
+    const etag = `"${assetId}-${asset.uploadDate ? new Date(asset.uploadDate).getTime() : ''}"`;
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
+    }
+
+    res.setHeader('Content-Type', asset.contentType || 'application/octet-stream');
+    res.setHeader('Content-Length', asset.length);
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    if (asset.stream) {
+      asset.stream.pipe(res);
+    } else if (asset.buffer) {
+      res.send(asset.buffer);
+    } else {
+      res.status(500).json({ error: 'Unable to stream asset content.' });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -349,6 +349,46 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
               </div>
             </div>
 
+            {/* Wikimedia Commons Attribution & Source Links */}
+            {activeCampaign.sourceName && (
+              <div className="px-4 py-2.5 bg-surface-container-low border-t border-surface-container-high flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 text-on-surface-variant min-w-0">
+                  <span className="material-symbols-outlined text-[16px] text-secondary shrink-0">attribution</span>
+                  <span className="truncate">
+                    Source: <strong className="text-on-surface">{activeCampaign.sourceName}</strong>
+                    {activeCampaign.attribution ? ` • Author: ${activeCampaign.attribution}` : ''}
+                    {activeCampaign.licenseName ? ` • License: ${activeCampaign.licenseName}` : ''}
+                  </span>
+                </div>
+                {activeCampaign.sourceUrl && (
+                  <a
+                    href={activeCampaign.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-secondary hover:text-primary font-semibold underline text-xs shrink-0"
+                  >
+                    <span>View Source & License</span>
+                    <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* GridFS Asset Metadata Badge */}
+            {activeCampaign.assetId && (
+              <div className="px-4 py-2 bg-surface-container-low border-t border-surface-container-high flex items-center justify-between gap-2 text-[11px] font-mono text-secondary">
+                <div className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px]">cloud_done</span>
+                  <span>GridFS Asset ID: {activeCampaign.assetId.slice(0, 12)}…</span>
+                </div>
+                {activeCampaign.assetMetadata?.size && (
+                  <span className="text-on-surface-variant">
+                    {Math.round(activeCampaign.assetMetadata.size / 1024)} KB · {activeCampaign.assetMetadata.mimeType}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Proof Quick Action Sub-bar */}
             <div className="px-4 py-3 bg-surface-container-low border-t border-surface-container-high flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">

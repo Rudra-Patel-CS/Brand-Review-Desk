@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Brand } from '../../data/mockData.js';
 import { CampaignPreset } from '../../utils/rulesEngine.js';
+import { getCsrfToken } from '../../utils/auth.js';
 
 interface UploadCreativeModalProps {
   isOpen: boolean;
@@ -9,6 +10,8 @@ interface UploadCreativeModalProps {
   activeBrand: Brand;
   onAddCampaign: (newCampaign: CampaignPreset) => void;
 }
+
+const MAX_SIZE_BYTES = 15 * 1024 * 1024; // 15MB
 
 export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   isOpen,
@@ -23,13 +26,22 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   const [format, setFormat] = useState('Short-Form Video Ad');
   const [caption, setCaption] = useState('Fresh organic selections made for your healthy lifestyle! 100% pure quality. #CleanNutrition');
   const [previewUrl, setPreviewUrl] = useState<string>('/assets/aistudio/screen_81b71146.png');
-  const [isScanning, setIsScanning] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > MAX_SIZE_BYTES) {
+        setUploadError(`File is too large (${Math.round(file.size / 1024 / 1024)}MB). Maximum allowed size is 15MB.`);
+        return;
+      }
+
+      setSelectedFile(file);
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       if (!title) {
@@ -38,16 +50,55 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsScanning(true);
+    setUploadError(null);
+    setIsUploading(true);
 
-    setTimeout(() => {
+    try {
+      let finalImageUrl = previewUrl;
+      let assetId: string | undefined = undefined;
+      let assetMetadata: any = undefined;
+
+      // If a real local file was chosen, upload it to MongoDB GridFS
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        const csrfToken = getCsrfToken();
+        const headers: Record<string, string> = {};
+        if (csrfToken) {
+          headers['X-CSRF-Token'] = csrfToken;
+        }
+
+        const res = await fetch('/api/assets/upload', {
+          method: 'POST',
+          credentials: 'include',
+          headers,
+          body: formData
+        });
+
+        let data: any = null;
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+
+        if (!res.ok) {
+          throw new Error(data?.error || `Upload failed with status ${res.status}`);
+        }
+
+        finalImageUrl = data.url;
+        assetId = data.assetId;
+        assetMetadata = data.metadata;
+      }
+
       const brand = brands.find((b) => b.id === selectedBrandId) || activeBrand;
       const campaignCode = `CAMPAIGN-${Math.floor(1000 + Math.random() * 9000)}`;
-      
+
       const newPreset: CampaignPreset = {
-        id: `custom-${Date.now()}`,
+        id: `campaign-${Date.now()}`,
         code: campaignCode,
         title: title.trim() || 'Untitled Campaign Asset',
         brandId: brand.id,
@@ -55,32 +106,23 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         channel,
         format,
         aspectRatio: '4/5',
-        imageUrl: previewUrl,
+        imageUrl: finalImageUrl,
+        assetId,
+        assetMetadata,
         caption,
-        ocrText: 'RAW ORGANIC COLD PRESSED 100% PURE INGREDIENTS SHOP NOW AT OUR STORES',
-        ocrConfidence: 97.5,
+        ocrText: '',
+        ocrConfidence: 0,
         status: 'action_required',
-        initialFindings: [
-          {
-            id: `f-${Date.now()}-1`,
-            ruleId: 'FB-012',
-            ruleTitle: 'Health Claim Verification',
-            matchedText: '100% pure',
-            severity: 'warning',
-            source: 'both',
-            ruleSource: 'FDA/FTC Advertising Compliance Framework',
-            explanation: 'Substantiation record required for absolute purity declarations.',
-            suggestedCorrection: 'High Quality Verified Ingredients',
-            status: 'open',
-            bbox: { top: 45.0, left: 35.0, width: 30.0, height: 8.0 }
-          }
-        ]
+        initialFindings: []
       };
 
       onAddCampaign(newPreset);
-      setIsScanning(false);
       onClose();
-    }, 900);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Error uploading creative asset');
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -92,7 +134,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
             <div>
               <h3 className="font-serif text-lg font-medium text-on-surface">Upload Campaign Creative</h3>
               <span className="text-xs text-on-surface-variant">
-                Upload image proof and run automated OCR compliance check
+                Stores image asset securely in MongoDB GridFS
               </span>
             </div>
           </div>
@@ -106,29 +148,41 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+          {uploadError && (
+            <div className="p-3 rounded-xl bg-error-container text-on-error-container text-xs flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">error</span>
+              <span>{uploadError}</span>
+            </div>
+          )}
+
           {/* File Upload Zone */}
           <div>
-            <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1.5">
-              Creative Asset Artwork
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
+                Creative Asset Artwork
+              </label>
+              <span className="text-[10px] font-mono text-secondary font-medium">
+                MongoDB GridFS Storage · Max 15MB
+              </span>
+            </div>
             <div className="border-2 border-dashed border-surface-container-highest rounded-xl p-4 text-center hover:bg-surface-container-low transition-colors relative flex flex-col items-center justify-center">
               {previewUrl ? (
                 <div className="w-full h-36 rounded-lg overflow-hidden relative bg-surface-container-high mb-2">
                   <img src={previewUrl} alt="Upload preview" className="w-full h-full object-cover" />
                   <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-inverse-surface/80 text-inverse-on-surface text-[10px] font-mono">
-                    Ready for OCR
+                    {selectedFile ? `${Math.round(selectedFile.size / 1024)} KB` : 'Preview'}
                   </span>
                 </div>
               ) : (
                 <div className="py-6 flex flex-col items-center">
                   <span className="material-symbols-outlined text-outline text-[32px] mb-1">cloud_upload</span>
-                  <p className="text-xs text-on-surface font-medium">Drag and drop file here, or browse</p>
-                  <p className="text-[11px] text-outline mt-0.5">PNG, JPG, WebP up to 25MB</p>
+                  <p className="text-xs text-on-surface font-medium">Choose an image file from your computer</p>
+                  <p className="text-[11px] text-outline mt-0.5">PNG, JPEG, WebP, GIF up to 15MB</p>
                 </div>
               )}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp,image/gif"
                 onChange={handleFileChange}
                 className="absolute inset-0 opacity-0 cursor-pointer"
               />
@@ -191,7 +245,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
           {/* Ad Caption Copy */}
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1">
-              Initial Ad Caption Copy
+              Ad Caption Copy
             </label>
             <textarea
               rows={3}
@@ -205,25 +259,25 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              disabled={isScanning}
+              disabled={isUploading}
               className="px-3 py-1.5 rounded text-xs font-medium text-on-surface-variant hover:text-on-surface"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isScanning}
+              disabled={isUploading}
               className="px-4 py-2 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all flex items-center gap-1.5 shadow-sm"
             >
-              {isScanning ? (
+              {isUploading ? (
                 <>
-                  <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
-                  Scanning OCR...
+                  <span className="material-symbols-outlined text-[16px] animate-spin">cloud_upload</span>
+                  Storing in GridFS…
                 </>
               ) : (
                 <>
-                  <span className="material-symbols-outlined text-[16px]">document_scanner</span>
-                  Upload & Run Audit
+                  <span className="material-symbols-outlined text-[16px]">cloud_upload</span>
+                  Upload Creative Asset
                 </>
               )}
             </button>

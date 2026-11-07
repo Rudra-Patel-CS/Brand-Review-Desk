@@ -40,11 +40,31 @@ export interface CampaignPreset {
   format: string;
   aspectRatio: string;
   imageUrl: string;
+  assetId?: string;
+  assetMetadata?: {
+    mimeType?: string;
+    size?: number;
+    extension?: string;
+    uploadedBy?: string;
+    uploadedAt?: string | Date;
+  };
   caption: string;
   ocrText: string;
   ocrConfidence: number;
+  extractedText?: string;
+  correctedArtworkText?: string;
   initialFindings: ComplianceFinding[];
   status: 'action_required' | 'under_review' | 'approved' | 'rejected';
+  sourceName?: string;
+  sourceUrl?: string;
+  licenseName?: string;
+  licenseUrl?: string;
+  attribution?: string;
+  sourceDescription?: string;
+  referenceOnly?: boolean;
+  isDemo?: boolean;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
 }
 
 export interface ReviewRecord {
