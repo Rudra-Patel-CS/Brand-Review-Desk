@@ -13,7 +13,9 @@ const db = require('./db');
 const auth = require('./auth');
 
 const app = express();
-const PORT = process.env.BACKEND_PORT || process.env.PORT || 3000;
+// Render provides PORT for the public web service. Keep BACKEND_PORT as a
+// local-development fallback only so it cannot override Render's assigned port.
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -323,7 +325,7 @@ app.use((req, res) => {
 
 // Start the server immediately so web UI & APIs are instantly responsive
 function start() {
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`Brand Review Desk server listening on http://localhost:${PORT}`);
   });
   // Connect to database in background
