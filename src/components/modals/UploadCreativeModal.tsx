@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Brand } from '../../data/mockData.js';
-import { CampaignPreset } from '../../utils/rulesEngine.js';
+import { CampaignPreset, BrandRule, DEFAULT_RULES, runComplianceAudit } from '../../utils/rulesEngine.js';
 import { getCsrfToken } from '../../utils/auth.js';
 
 interface UploadCreativeModalProps {
@@ -8,6 +8,7 @@ interface UploadCreativeModalProps {
   onClose: () => void;
   brands: Brand[];
   activeBrand: Brand;
+  rules?: BrandRule[];
   onAddCampaign: (newCampaign: CampaignPreset) => void;
 }
 
@@ -18,6 +19,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   onClose,
   brands,
   activeBrand,
+  rules = DEFAULT_RULES,
   onAddCampaign
 }) => {
   const [title, setTitle] = useState('');
@@ -28,6 +30,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string>('/assets/aistudio/screen_81b71146.png');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStep, setUploadStep] = useState<string>('');
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -54,22 +57,23 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
     e.preventDefault();
     setUploadError(null);
     setIsUploading(true);
+    setUploadStep('Storing asset in MongoDB GridFS...');
 
     try {
       let finalImageUrl = previewUrl;
       let assetId: string | undefined = undefined;
       let assetMetadata: any = undefined;
 
+      const csrfToken = getCsrfToken();
+      const headers: Record<string, string> = {};
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+
       // If a real local file was chosen, upload it to MongoDB GridFS
       if (selectedFile) {
         const formData = new FormData();
         formData.append('file', selectedFile);
-
-        const csrfToken = getCsrfToken();
-        const headers: Record<string, string> = {};
-        if (csrfToken) {
-          headers['X-CSRF-Token'] = csrfToken;
-        }
 
         const res = await fetch('/api/assets/upload', {
           method: 'POST',
@@ -94,8 +98,57 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         assetMetadata = data.metadata;
       }
 
+      // Perform genuine Optical Character Recognition on the creative image
+      setUploadStep('Extracting artwork text with Optical Character Recognition...');
+      let ocrText = '';
+      let ocrConfidence = 0;
+      let ocrLines: any[] = [];
+      let ocrWords: any[] = [];
+
+      try {
+        const ocrPayload: Record<string, string> = {};
+        if (assetId) {
+          ocrPayload.assetId = assetId;
+        } else if (finalImageUrl) {
+          ocrPayload.imageUrl = finalImageUrl;
+        }
+
+        if (ocrPayload.assetId || ocrPayload.imageUrl) {
+          const ocrRes = await fetch('/api/ocr/extract', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+            },
+            body: JSON.stringify(ocrPayload)
+          });
+
+          if (ocrRes.ok) {
+            const ocrData = await ocrRes.json();
+            ocrText = ocrData.text || '';
+            ocrConfidence = typeof ocrData.confidence === 'number' ? ocrData.confidence : 0;
+            ocrLines = ocrData.lines || [];
+            ocrWords = ocrData.words || [];
+          }
+        }
+      } catch (ocrErr) {
+        // Genuine errors logged but do not prevent creative creation
+        console.warn('OCR extraction warning:', ocrErr);
+      }
+
       const brand = brands.find((b) => b.id === selectedBrandId) || activeBrand;
       const campaignCode = `CAMPAIGN-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      // Run brand rules against caption and extracted artwork text with coordinates
+      const initialFindings = runComplianceAudit(
+        caption,
+        ocrText,
+        rules,
+        brand.id,
+        ocrLines,
+        ocrWords
+      );
 
       const newPreset: CampaignPreset = {
         id: `campaign-${Date.now()}`,
@@ -110,10 +163,13 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         assetId,
         assetMetadata,
         caption,
-        ocrText: '',
-        ocrConfidence: 0,
-        status: 'action_required',
-        initialFindings: []
+        ocrText,
+        extractedText: ocrText,
+        ocrConfidence,
+        ocrLines,
+        ocrWords,
+        status: initialFindings.some((f) => f.severity === 'critical') ? 'action_required' : 'under_review',
+        initialFindings
       };
 
       onAddCampaign(newPreset);
@@ -122,6 +178,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
       setUploadError(err instanceof Error ? err.message : 'Error uploading creative asset');
     } finally {
       setIsUploading(false);
+      setUploadStep('');
     }
   };
 
@@ -271,8 +328,8 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
             >
               {isUploading ? (
                 <>
-                  <span className="material-symbols-outlined text-[16px] animate-spin">cloud_upload</span>
-                  Storing in GridFS…
+                  <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
+                  <span>{uploadStep || 'Processing asset…'}</span>
                 </>
               ) : (
                 <>

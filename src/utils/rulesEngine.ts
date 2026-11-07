@@ -30,6 +30,12 @@ export interface ComplianceFinding {
   bbox?: { top: number; left: number; width: number; height: number }; // Percentage coords on image
 }
 
+export interface OcrToken {
+  text: string;
+  confidence: number;
+  bbox: { top: number; left: number; width: number; height: number } | null;
+}
+
 export interface CampaignPreset {
   id: string;
   code: string;
@@ -53,6 +59,8 @@ export interface CampaignPreset {
   ocrConfidence: number;
   extractedText?: string;
   correctedArtworkText?: string;
+  ocrLines?: OcrToken[];
+  ocrWords?: OcrToken[];
   initialFindings: ComplianceFinding[];
   status: 'action_required' | 'under_review' | 'approved' | 'rejected';
   sourceName?: string;
@@ -224,7 +232,9 @@ export function runComplianceAudit(
   caption: string,
   ocrText: string,
   rules: BrandRule[],
-  brandId?: string
+  brandId?: string,
+  ocrLines?: OcrToken[],
+  ocrWords?: OcrToken[]
 ): ComplianceFinding[] {
   const activeRules = rules.filter(r => r.enabled && (!brandId || r.brand === brandId || r.brand === 'global'));
   const findings: ComplianceFinding[] = [];
@@ -245,6 +255,26 @@ export function runComplianceAudit(
         matchedCaption && matchedOcr ? 'both' : matchedCaption ? 'caption' : 'ocr';
       const matchedPhrase = matchedCaption ? matchedCaption[0] : matchedOcr ? matchedOcr[0] : '';
 
+      // Match bounding box from genuine OCR lines/words if this finding appeared in OCR
+      let bbox: { top: number; left: number; width: number; height: number } | undefined = undefined;
+      if ((source === 'ocr' || source === 'both') && matchedPhrase) {
+        const query = matchedPhrase.toLowerCase().trim();
+        // Check lines first
+        if (Array.isArray(ocrLines)) {
+          const matchedLine = ocrLines.find(l => l.bbox && l.text.toLowerCase().includes(query));
+          if (matchedLine && matchedLine.bbox) {
+            bbox = { ...matchedLine.bbox };
+          }
+        }
+        // Fallback to words
+        if (!bbox && Array.isArray(ocrWords)) {
+          const matchedWord = ocrWords.find(w => w.bbox && w.text.toLowerCase().includes(query));
+          if (matchedWord && matchedWord.bbox) {
+            bbox = { ...matchedWord.bbox };
+          }
+        }
+      }
+
       findings.push({
         id: `finding-${rule.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         ruleId: rule.id,
@@ -255,7 +285,8 @@ export function runComplianceAudit(
         ruleSource: rule.source,
         explanation: rule.explanation,
         suggestedCorrection: rule.suggestedRemedy,
-        status: 'open'
+        status: 'open',
+        bbox
       });
     }
   }

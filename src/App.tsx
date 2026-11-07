@@ -27,7 +27,8 @@ import {
   DEFAULT_RULES,
   CampaignPreset,
   ComplianceFinding,
-  ReviewRecord
+  ReviewRecord,
+  runComplianceAudit
 } from './utils/rulesEngine.js';
 
 interface WorkspaceSnapshot {
@@ -108,7 +109,21 @@ export default function App() {
   // Modals state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isOcrOpen, setIsOcrOpen] = useState(false);
-  const [ocrModalData, setOcrModalData] = useState({ text: '', confidence: 98 });
+  const [ocrModalData, setOcrModalData] = useState<{
+    campaignId: string;
+    extractedText: string;
+    correctedText?: string;
+    confidence: number;
+    linesCount?: number;
+    wordsCount?: number;
+  }>({
+    campaignId: '',
+    extractedText: '',
+    correctedText: '',
+    confidence: 0,
+    linesCount: 0,
+    wordsCount: 0
+  });
   const [isNewRuleOpen, setIsNewRuleOpen] = useState(false);
   const [ruleToEdit, setRuleToEdit] = useState<BrandRule | null>(null);
   const [isApproveOpen, setIsApproveOpen] = useState(false);
@@ -254,6 +269,47 @@ export default function App() {
     }
   };
 
+  const handleUpdateCampaign = async (updated: CampaignPreset) => {
+    setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    if (activeCampaign.id === updated.id) {
+      setActiveCampaign(updated);
+    }
+    try {
+      await apiFetch(`/api/workspace/campaigns/${encodeURIComponent(updated.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(updated)
+      });
+    } catch {
+      // Keep local state
+    }
+  };
+
+  const handleSaveOcrCorrections = async (correctedText: string) => {
+    const targetCamp = campaigns.find((c) => c.id === ocrModalData.campaignId) || activeCampaign;
+    if (!targetCamp) return;
+
+    // Re-run compliance audit against caption and corrected artwork text
+    const activeRules = rules;
+    const newFindings = runComplianceAudit(
+      targetCamp.caption,
+      correctedText,
+      activeRules,
+      targetCamp.brandId,
+      targetCamp.ocrLines,
+      targetCamp.ocrWords
+    );
+
+    const updatedCampaign: CampaignPreset = {
+      ...targetCamp,
+      ocrText: correctedText,
+      correctedArtworkText: correctedText,
+      initialFindings: newFindings
+    };
+
+    await handleUpdateCampaign(updatedCampaign);
+    showToast('Artwork corrections saved & brand rules re-evaluated');
+  };
+
   // Approve & file to Review History (Approver or Admin role required)
   const handleConfirmApproval = async () => {
     if (!approveData) return;
@@ -394,10 +450,19 @@ export default function App() {
             }}
             rules={rules}
             onOpenUpload={() => setIsUploadOpen(true)}
-            onOpenOcrText={(text, conf) => {
-              setOcrModalData({ text, confidence: conf });
+            onOpenOcrText={(text, conf, camp) => {
+              const campaign = camp || activeCampaign;
+              setOcrModalData({
+                campaignId: campaign.id,
+                extractedText: campaign.extractedText || campaign.ocrText || text || '',
+                correctedText: campaign.correctedArtworkText || '',
+                confidence: typeof campaign.ocrConfidence === 'number' ? campaign.ocrConfidence : conf,
+                linesCount: campaign.ocrLines?.length,
+                wordsCount: campaign.ocrWords?.length
+              });
               setIsOcrOpen(true);
             }}
+            onUpdateCampaign={handleUpdateCampaign}
             onOpenApproveModal={(camp, cap, f) => {
               if (user.role === 'reviewer') {
                 showToast('Review approval requires Approver or Administrator role.');
@@ -450,12 +515,12 @@ export default function App() {
       <OcrTextModal
         isOpen={isOcrOpen}
         onClose={() => setIsOcrOpen(false)}
-        ocrText={ocrModalData.text}
+        extractedText={ocrModalData.extractedText}
+        correctedText={ocrModalData.correctedText}
         confidence={ocrModalData.confidence}
-        onUpdateOcrText={(newText) => {
-          setOcrModalData((prev) => ({ ...prev, text: newText }));
-          showToast('Updated extracted OCR text');
-        }}
+        linesCount={ocrModalData.linesCount}
+        wordsCount={ocrModalData.wordsCount}
+        onSaveCorrections={handleSaveOcrCorrections}
       />
 
       <UploadCreativeModal
@@ -463,6 +528,7 @@ export default function App() {
         onClose={() => setIsUploadOpen(false)}
         brands={brands}
         activeBrand={activeBrand}
+        rules={rules}
         onAddCampaign={handleAddCampaign}
       />
 

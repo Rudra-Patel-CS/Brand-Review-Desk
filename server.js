@@ -14,6 +14,7 @@ require('dotenv').config();
 const db = require('./db');
 const auth = require('./auth');
 const storage = require('./storage');
+const ocrEngine = require('./ocrEngine');
 const multer = require('multer');
 
 const upload = multer({
@@ -562,6 +563,59 @@ app.get('/api/assets/:id', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Optical Character Recognition (OCR) Endpoint ─────────────────────────────
+// Runs real Optical Character Recognition using Tesseract.js.
+// Returns genuine extracted text, real confidence, and percentage coordinates.
+app.post('/api/ocr/extract', requireAuth, (req, res) => {
+  upload.single('file')(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || 'File upload error.' });
+    }
+
+    try {
+      let imageSource = null;
+
+      if (req.file) {
+        imageSource = req.file.buffer;
+      } else if (req.body && req.body.assetId) {
+        imageSource = req.body.assetId;
+      } else if (req.body && req.body.imageUrl) {
+        imageSource = req.body.imageUrl;
+      } else if (req.body && req.body.data) {
+        imageSource = req.body.data;
+      }
+
+      if (!imageSource) {
+        return res.status(400).json({
+          error: 'No image source provided. Supply an uploaded file, assetId, or imageUrl.'
+        });
+      }
+
+      const database = await db.connectDB();
+      const ocrResult = await ocrEngine.recognizeImage(imageSource, {
+        database,
+        memoryStore: db.memoryStore
+      });
+
+      return res.json({
+        success: true,
+        text: ocrResult.text,
+        confidence: ocrResult.confidence,
+        imageDimensions: ocrResult.imageDimensions,
+        lines: ocrResult.lines,
+        words: ocrResult.words
+      });
+    } catch (ocrErr) {
+      if (ocrErr.code === 'UNRESTRICTED_URL_RESTRICTED') {
+        return res.status(400).json({ error: ocrErr.message });
+      }
+      return res.status(500).json({
+        error: ocrErr.message || 'An error occurred during OCR recognition.'
+      });
+    }
+  });
 });
 
 // ── Workspace & Campaign Endpoints ────────────────────────────────────────────

@@ -9,6 +9,8 @@ import {
   runComplianceAudit
 } from '../utils/rulesEngine.js';
 
+import { getCsrfToken } from '../utils/auth.js';
+
 interface ReviewContentProps {
   activeBrand: Brand;
   campaigns: CampaignPreset[];
@@ -16,7 +18,8 @@ interface ReviewContentProps {
   onSelectCampaign: (campaign: CampaignPreset) => void;
   rules: BrandRule[];
   onOpenUpload: () => void;
-  onOpenOcrText: (ocrText: string, confidence: number) => void;
+  onOpenOcrText: (ocrText: string, confidence: number, campaign?: CampaignPreset) => void;
+  onUpdateCampaign?: (campaign: CampaignPreset) => void;
   onOpenApproveModal: (campaign: CampaignPreset, caption: string, findings: ComplianceFinding[]) => void;
   onOpenDismissModal: (finding: ComplianceFinding) => void;
   onOpenPlannedModal: (title: string) => void;
@@ -30,15 +33,20 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   rules,
   onOpenUpload,
   onOpenOcrText,
+  onUpdateCampaign,
   onOpenApproveModal,
   onOpenDismissModal,
   onOpenPlannedModal
 }) => {
   const [currentCaption, setCurrentCaption] = useState(activeCampaign.caption);
-  const [currentOcrText, setCurrentOcrText] = useState(activeCampaign.ocrText);
+  const [currentOcrText, setCurrentOcrText] = useState(
+    activeCampaign.correctedArtworkText || activeCampaign.extractedText || activeCampaign.ocrText || ''
+  );
   const [findings, setFindings] = useState<ComplianceFinding[]>(activeCampaign.initialFindings);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanStatusMessage, setScanStatusMessage] = useState('Extracting artwork text via Tesseract OCR…');
+  const [ocrError, setOcrError] = useState<string | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState('Autosaved just now');
   const [zoomLevel, setZoomLevel] = useState<1 | 1.25 | 1.5>(1);
 
@@ -47,9 +55,12 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   // Sync state when active campaign changes
   useEffect(() => {
     setCurrentCaption(activeCampaign.caption);
-    setCurrentOcrText(activeCampaign.ocrText);
+    setCurrentOcrText(
+      activeCampaign.correctedArtworkText || activeCampaign.extractedText || activeCampaign.ocrText || ''
+    );
     setFindings(activeCampaign.initialFindings);
     setSelectedFindingId(null);
+    setOcrError(null);
   }, [activeCampaign]);
 
   // Re-run compliance calculations
@@ -65,11 +76,111 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     return () => clearTimeout(timeout);
   };
 
+  // Re-scan artwork with real OCR engine
+  const handleRescanOcr = async () => {
+    setIsScanning(true);
+    setOcrError(null);
+    setScanStatusMessage('Connecting to Tesseract OCR engine...');
+
+    try {
+      const csrfToken = getCsrfToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+
+      setScanStatusMessage('Analyzing artwork pixels & recognizing text...');
+
+      const payload: Record<string, string> = {};
+      if (activeCampaign.assetId) {
+        payload.assetId = activeCampaign.assetId;
+      } else if (activeCampaign.imageUrl) {
+        payload.imageUrl = activeCampaign.imageUrl;
+      }
+
+      const res = await fetch('/api/ocr/extract', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || `OCR Engine request failed with status ${res.status}`);
+      }
+
+      const extracted = data.text || '';
+      const conf = typeof data.confidence === 'number' ? data.confidence : 0;
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      const words = Array.isArray(data.words) ? data.words : [];
+
+      setCurrentOcrText(extracted);
+
+      // Re-run compliance audit with genuine OCR bounding boxes
+      const detected = runComplianceAudit(
+        currentCaption,
+        extracted,
+        rules,
+        activeBrand.id,
+        lines,
+        words
+      );
+
+      const updatedFindings = detected.map((df) => {
+        const existing = findings.find((f) => f.ruleId === df.ruleId);
+        if (existing && existing.status !== 'open') {
+          return { ...df, status: existing.status, dismissNote: existing.dismissNote };
+        }
+        return df;
+      });
+
+      setFindings(updatedFindings);
+      setAutosaveStatus(`OCR complete • ${conf}% confidence • ${lines.length} lines`);
+
+      if (onUpdateCampaign) {
+        onUpdateCampaign({
+          ...activeCampaign,
+          ocrText: extracted,
+          extractedText: extracted,
+          correctedArtworkText: undefined,
+          ocrConfidence: conf,
+          ocrLines: lines,
+          ocrWords: words,
+          initialFindings: updatedFindings
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'OCR scan failed';
+      setOcrError(msg);
+      setAutosaveStatus('OCR scan error');
+    } finally {
+      setIsScanning(false);
+      setScanStatusMessage('');
+    }
+  };
+
   // Re-audit compliance
   const handleReaudit = () => {
     setIsScanning(true);
+    setScanStatusMessage('Re-evaluating brand rules against copy & artwork...');
     setTimeout(() => {
-      const detected = runComplianceAudit(currentCaption, currentOcrText, rules, activeBrand.id);
+      const detected = runComplianceAudit(
+        currentCaption,
+        currentOcrText,
+        rules,
+        activeBrand.id,
+        activeCampaign.ocrLines,
+        activeCampaign.ocrWords
+      );
       // Preserve existing applied/dismissed findings if they still match rule
       const updatedFindings = detected.map((df) => {
         const existing = findings.find((f) => f.ruleId === df.ruleId);
@@ -80,8 +191,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
       });
       setFindings(updatedFindings);
       setIsScanning(false);
+      setScanStatusMessage('');
       setAutosaveStatus('Re-audit complete • 100% matched');
-    }, 650);
+    }, 400);
   };
 
   // Handle Apply Suggestion
@@ -261,10 +373,29 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 </div>
 
                 <span className="px-2 py-0.5 rounded bg-surface-container font-mono text-[11px] text-on-surface-variant">
-                  OCR: {activeCampaign.ocrConfidence}%
+                  {activeCampaign.ocrConfidence > 0
+                    ? `OCR Confidence: ${activeCampaign.ocrConfidence}%`
+                    : 'OCR: No text detected'}
                 </span>
               </div>
             </div>
+
+            {/* Genuine OCR Engine Error Banner */}
+            {ocrError && (
+              <div className="px-4 py-2.5 bg-error-container text-on-error-container border-b border-error/30 text-xs flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">error</span>
+                  <span><strong>OCR Engine Notice:</strong> {ocrError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOcrError(null)}
+                  className="text-on-error-container hover:opacity-85"
+                >
+                  <span className="material-symbols-outlined text-[16px]">close</span>
+                </button>
+              </div>
+            )}
 
             {/* Artwork Canvas Stage with Interactive OCR Overlays */}
             <div className="relative w-full overflow-hidden bg-stone-900 flex items-center justify-center min-h-[420px] max-h-[580px] p-2 select-none">
@@ -280,10 +411,10 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
 
                 {/* Simulated OCR scanning scanline when re-scanning */}
                 {isScanning && (
-                  <div className="absolute inset-0 bg-primary/20 backdrop-blur-[1px] animate-pulse flex items-center justify-center">
-                    <div className="bg-inverse-surface/90 text-inverse-on-surface px-4 py-2 rounded-xl shadow-xl flex items-center gap-2 font-mono text-xs">
+                  <div className="absolute inset-0 bg-primary/20 backdrop-blur-[1px] animate-pulse flex items-center justify-center z-30">
+                    <div className="bg-inverse-surface/90 text-inverse-on-surface px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 font-mono text-xs">
                       <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
-                      Scanning OCR Coordinates & Brand Rules...
+                      <span>{scanStatusMessage || 'Scanning OCR Coordinates & Brand Rules...'}</span>
                     </div>
                   </div>
                 )}
@@ -394,7 +525,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleReaudit}
+                  onClick={handleRescanOcr}
                   disabled={isScanning}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface text-xs font-semibold border border-surface-container-high transition-colors shadow-xs"
                 >
@@ -402,6 +533,15 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                     sync
                   </span>
                   Re-scan OCR
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReaudit}
+                  disabled={isScanning}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface text-xs font-semibold border border-surface-container-high transition-colors shadow-xs"
+                >
+                  <span className="material-symbols-outlined text-[16px]">rule</span>
+                  Re-audit Rules
                 </button>
                 <button
                   type="button"
@@ -415,12 +555,23 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
 
               <button
                 type="button"
-                onClick={() => onOpenOcrText(currentOcrText, activeCampaign.ocrConfidence)}
+                onClick={() => onOpenOcrText(currentOcrText, activeCampaign.ocrConfidence, activeCampaign)}
                 className="flex items-center gap-1 text-xs font-mono text-secondary hover:text-primary font-semibold py-1 px-2 rounded hover:bg-surface-container transition-colors"
               >
                 <span className="material-symbols-outlined text-[16px]">text_fields</span>
-                View Extracted OCR Text ({currentOcrText.split(/\s+/).length} words)
+                Review / Correct Artwork Text ({currentOcrText.trim() ? currentOcrText.trim().split(/\s+/).length : 0} words)
               </button>
+            </div>
+          </div>
+
+          {/* OCR Transparency & Human Verification Statement Card */}
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-start gap-3 text-xs text-amber-950 shadow-xs">
+            <span className="material-symbols-outlined text-[20px] text-amber-700 shrink-0 mt-0.5">verified_user</span>
+            <div className="space-y-1">
+              <span className="font-bold text-amber-900 block">OCR Transparency & Human Review Notice</span>
+              <p className="text-[11px] text-amber-900/80 leading-relaxed">
+                Optical Character Recognition (OCR) may miss, misread, or truncate artwork text depending on font typography, contrast, or image compression. Automated OCR text extraction is not a legal compliance certification. Reviewers must review extracted text and can manually correct results at any time before final sign-off.
+              </p>
             </div>
           </div>
 
