@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Brand, APPROVED_CLAIMS } from '../data/mockData.js';
 import { BrandRule, filterBrandRules } from '../utils/rulesEngine.js';
+import { isPublicDemoMode } from '../utils/publicDemo.js';
+import { downloadBlob } from '../utils/download.js';
 
 interface BrandRulesProps {
   brands: Brand[];
@@ -11,6 +13,8 @@ interface BrandRulesProps {
   onDeleteRule: (ruleId: string) => void;
   onOpenNewRule: (ruleToEdit?: BrandRule) => void;
   onResetRules: () => void;
+  onImportRules?: (rules: BrandRule[]) => void;
+  onSaveRule?: (rule: BrandRule) => void;
 }
 
 export const BrandRules: React.FC<BrandRulesProps> = ({
@@ -21,7 +25,8 @@ export const BrandRules: React.FC<BrandRulesProps> = ({
   onToggleRule,
   onDeleteRule,
   onOpenNewRule,
-  onResetRules
+  onResetRules,
+  onImportRules
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -29,6 +34,8 @@ export const BrandRules: React.FC<BrandRulesProps> = ({
   const [sampleCopy, setSampleCopy] = useState('Try our 100% detox green juice today! Guaranteed cure.');
   const [claimsExpanded, setClaimsExpanded] = useState(true);
   const [exportToast, setExportToast] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement | null>(null);
 
   // Filtered rules
   const filtered = filterBrandRules(rules, {
@@ -81,14 +88,28 @@ export const BrandRules: React.FC<BrandRulesProps> = ({
   // Export JSON
   const handleExportJson = () => {
     const blob = new Blob([JSON.stringify(rules, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `brand-rules-${activeBrand.id}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `brand-rules-${activeBrand.id}.json`);
     setExportToast(true);
     setTimeout(() => setExportToast(false), 2200);
+  };
+
+  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      setImportError(null);
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const list = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === 'object' && Array.isArray((parsed as any).rules) ? (parsed as any).rules : null);
+      if (!list) throw new Error('JSON must be an array of rules or an object with a rules array.');
+      const valid = list.filter((r: any) => r && typeof r.id === 'string' && typeof r.pattern === 'string' && typeof r.title === 'string') as BrandRule[];
+      if (!valid.length) throw new Error('No valid rules found. Each rule needs id, title, and pattern.');
+      onImportRules?.(valid);
+      setExportToast(true);
+      setTimeout(() => setExportToast(false), 2200);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Could not import rules.');
+    }
   };
 
   return (
@@ -114,7 +135,7 @@ export const BrandRules: React.FC<BrandRulesProps> = ({
 
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-xs text-on-surface-variant bg-surface-container-low px-2.5 py-1 rounded-lg border border-surface-container-high">
-              Synced to MongoDB
+              {isPublicDemoMode ? 'Local demo workspace' : 'Synced to MongoDB'}
             </span>
           </div>
         </div>
@@ -174,14 +195,27 @@ export const BrandRules: React.FC<BrandRulesProps> = ({
 
         <button
           type="button"
+          onClick={() => importRef.current?.click()}
+          className="px-3.5 py-2 rounded-xl bg-surface-container-lowest hover:bg-surface-container-low text-on-surface text-xs font-semibold flex items-center gap-1.5 border border-surface-container-high shadow-xs transition-colors whitespace-nowrap"
+        >
+          <span className="material-symbols-outlined text-[18px] text-on-surface-variant">file_upload</span>
+          Import JSON
+        </button>
+        <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportJson} />
+
+        <button
+          type="button"
           onClick={onResetRules}
-          title="Restore factory default rules"
+          title="Restore default rules"
           className="px-3.5 py-2 rounded-xl bg-surface-container-lowest hover:bg-red-50 hover:text-error text-on-surface-variant text-xs font-semibold flex items-center gap-1.5 border border-surface-container-high shadow-xs transition-colors whitespace-nowrap"
         >
           <span className="material-symbols-outlined text-[18px]">restart_alt</span>
-          Reset Demo
+          {isPublicDemoMode ? 'Reset to Defaults' : 'Reset Demo'}
         </button>
       </section>
+      {importError && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">{importError}</div>
+      )}
 
       {/* 3. Search & Filters Bar */}
       <section className="bg-surface-container-lowest p-4 rounded-2xl border border-surface-container-high shadow-sm space-y-3">

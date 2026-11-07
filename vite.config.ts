@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: process.env.VITE_BASE_PATH || '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -19,7 +20,7 @@ export default defineConfig(() => {
         watch: process.env.DISABLE_HMR === 'true' ? null : {},
         proxy: {
           '/api': {
-            target: 'http://localhost:5001',
+            target: 'http://localhost:5000',
             changeOrigin: true,
             secure: false,
           },

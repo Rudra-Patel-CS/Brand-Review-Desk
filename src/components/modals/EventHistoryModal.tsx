@@ -1,18 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { CampaignPreset, WorkflowEvent } from '../../utils/rulesEngine.js';
+import { downloadBlob } from '../../utils/download.js';
 
 interface EventHistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   campaign: CampaignPreset;
   onAddComment?: (comment: string) => Promise<void>;
+  isDemoMode?: boolean;
 }
 
 export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
   isOpen,
   onClose,
   campaign,
-  onAddComment
+  onAddComment,
+  isDemoMode = false
 }) => {
   const [events, setEvents] = useState<WorkflowEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,6 +29,24 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
     let cancelled = false;
     setLoading(true);
     setError(null);
+
+    if (isDemoMode) {
+      const commentEvents: WorkflowEvent[] = (campaign.comments || []).map((comment) => ({
+        id: comment.id,
+        campaignId: campaign.id,
+        actionType: 'comment_added',
+        user: comment.user,
+        timestamp: comment.timestamp,
+        details: { comment: comment.comment }
+      }));
+      setEvents([...(campaign.workflowEvents || []), ...commentEvents].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      ));
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     fetch(`/api/workspace/campaigns/${encodeURIComponent(campaign.id)}/events`, {
       credentials: 'include'
@@ -51,7 +72,7 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, campaign.id]);
+  }, [isOpen, campaign, isDemoMode]);
 
   if (!isOpen) return null;
 
@@ -63,6 +84,7 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
     try {
       await onAddComment(newComment.trim());
       setNewComment('');
+      if (isDemoMode) return;
       // Reload events
       const res = await fetch(`/api/workspace/campaigns/${encodeURIComponent(campaign.id)}/events`, {
         credentials: 'include'
@@ -79,6 +101,19 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
   };
 
   const handleExportJson = () => {
+    if (isDemoMode) {
+      const report = {
+        campaign,
+        events,
+        exportedAt: new Date().toISOString(),
+        demo: true
+      };
+      downloadBlob(
+        new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
+        `review-audit-${campaign.code}.json`
+      );
+      return;
+    }
     window.open(`/api/workspace/campaigns/${encodeURIComponent(campaign.id)}/export`, '_blank');
   };
 
@@ -276,4 +311,3 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
     </div>
   );
 };
-

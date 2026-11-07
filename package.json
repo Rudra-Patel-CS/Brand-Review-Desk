@@ -5,11 +5,12 @@
   "type": "commonjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "prebuild": "node scripts/prepare_ocr_assets.js",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
     "seed": "node scripts/seed_mongodb.js",
-    "test": "tsx --test --test-concurrency=1 src/utils/rulesEngine.test.ts tests/**/*.test.ts"
+    "test": "tsx --test --test-concurrency=1 src/utils/rulesEngine.test.ts src/utils/download.test.ts tests/**/*.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",

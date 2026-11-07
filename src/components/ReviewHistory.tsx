@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ReviewRecord } from '../utils/rulesEngine.js';
+import { downloadBlob } from '../utils/download.js';
 
 interface ReviewHistoryProps {
   reviews: ReviewRecord[];
@@ -26,20 +27,12 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
     return true;
   });
 
-  const passedPercentage = (
-    (reviews.filter((r) => r.status === 'approved').length / (reviews.length || 1)) *
-    100
-  ).toFixed(1);
+  const sampleReviews = reviews.filter((review) => review.isSample);
 
   const handleDownloadDossier = (record: ReviewRecord) => {
     const dataStr = JSON.stringify(record, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dossier-${record.dossierNumber}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `dossier-${record.dossierNumber}.json`);
   };
 
   return (
@@ -52,7 +45,9 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
               Compliance Review Archive
             </h1>
             <p className="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
-              Verifiable historical decisions, immutable audit trails, and post-review creative proofs across brand estates.
+              {reviews.some((review) => review.isSample)
+                ? 'Sample entries are illustrative, not verified legal decisions or immutable server records.'
+                : 'Review history and exports reflect records available to this workspace; automated checks are not legal certification.'}
             </p>
           </div>
           <span className="font-mono text-xs text-secondary bg-surface-container-low px-3 py-1 rounded-lg border border-surface-container-high self-start sm:self-auto">
@@ -63,23 +58,23 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
         {/* Stats Summary Bento Pills */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
           <div className="bg-surface-container-low p-3.5 rounded-xl border border-surface-container-high flex flex-col justify-center">
-            <span className="font-mono text-[11px] text-on-surface-variant uppercase">First-Pass Rate</span>
-            <span className="font-serif text-2xl text-primary font-medium">{passedPercentage}%</span>
-            <span className="text-[11px] text-secondary font-medium mt-0.5">Approved on first pass</span>
+            <span className="font-mono text-[11px] text-on-surface-variant uppercase">Sample Records</span>
+            <span className="font-serif text-2xl text-primary font-medium">{sampleReviews.length}</span>
+            <span className="text-[11px] text-secondary font-medium mt-0.5">Illustrative only; not verified approvals</span>
           </div>
 
           <div className="bg-surface-container-low p-3.5 rounded-xl border border-surface-container-high flex flex-col justify-center">
             <span className="font-mono text-[11px] text-on-surface-variant uppercase">Avg Decision Time</span>
-            <span className="font-serif text-2xl text-on-surface font-medium">18 mins</span>
-            <span className="text-[11px] text-on-surface-variant mt-0.5">Triage turnaround benchmark</span>
+            <span className="font-serif text-2xl text-on-surface font-medium">Not measured</span>
+            <span className="text-[11px] text-on-surface-variant mt-0.5">No timing data collected</span>
           </div>
 
           <div className="bg-surface-container-low p-3.5 rounded-xl border border-surface-container-high flex flex-col justify-center">
-            <span className="font-mono text-[11px] text-on-surface-variant uppercase">Escalations Filed</span>
+            <span className="font-mono text-[11px] text-on-surface-variant uppercase">Sample Escalations</span>
             <span className="font-serif text-2xl text-error font-medium">
-              {reviews.filter((r) => r.status === 'rejected' || r.status === 'conditional').length}
+              {sampleReviews.filter((r) => r.status === 'rejected' || r.status === 'conditional').length}
             </span>
-            <span className="text-[11px] text-on-surface-variant mt-0.5">Legal waivers / halts</span>
+            <span className="text-[11px] text-on-surface-variant mt-0.5">From illustrative sample records</span>
           </div>
         </div>
       </section>
@@ -94,7 +89,7 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search dossier number, campaign name, reviewer, or SHA-256 seal..."
+            placeholder="Search dossier number, campaign name, or reviewer..."
             className="w-full pl-10 pr-9 py-2 rounded-xl bg-surface-container-low text-xs text-on-surface placeholder:text-outline border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest"
           />
           {searchQuery && (
@@ -188,6 +183,11 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
                     <h2 className="font-serif text-lg font-medium text-on-surface leading-snug">
                       {record.campaignTitle}
                     </h2>
+                    {record.isSample && (
+                      <span className="inline-flex mt-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                        Illustrative sample
+                      </span>
+                    )}
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-on-surface-variant mt-0.5">
                       <span className="truncate">{record.channel}</span>
                       <span>•</span>
@@ -259,7 +259,11 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
                     Review Dossier #{selectedRecord.dossierNumber}
                   </h3>
                   <span className="font-mono text-xs text-secondary">
-                    SHA-256: {selectedRecord.sha256Hash.slice(0, 20)}...
+                    {selectedRecord.isSample
+                      ? 'Illustrative sample · no cryptographic attestation'
+                      : selectedRecord.isPublicDemo
+                        ? 'Local SHA-256 digest · not server-attested'
+                        : `SHA-256: ${selectedRecord.sha256Hash.slice(0, 20)}...`}
                   </span>
                 </div>
               </div>
@@ -306,7 +310,7 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
               {/* Electronic Signature Attestation Block */}
               <div className="p-3.5 rounded-xl bg-surface-container-low border border-surface-container-high space-y-2">
                 <span className="font-semibold text-on-surface-variant uppercase tracking-wider text-[11px] block">
-                  Legal Attestation & Cryptographic Sign
+                  {selectedRecord.isSample ? 'Illustrative Sample Record' : 'Review Record'}
                 </span>
                 <div className="flex items-center justify-between">
                   <div>
@@ -316,7 +320,9 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
                   <span className="material-symbols-outlined text-secondary text-[26px]">draw</span>
                 </div>
                 <div className="pt-1 border-t border-surface-container-high flex items-center justify-between font-mono text-[11px] text-on-surface-variant">
-                  <span>Audit Token: {selectedRecord.auditId}</span>
+                  <span>
+                    {selectedRecord.isSample ? 'Sample ID' : 'Audit ID'}: {selectedRecord.auditId}
+                  </span>
                   <span className="text-secondary font-bold">STATUS: {selectedRecord.status.toUpperCase()}</span>
                 </div>
               </div>
@@ -343,13 +349,13 @@ export const ReviewHistory: React.FC<ReviewHistoryProps> = ({ reviews }) => {
         </div>
       )}
 
-      {/* 5. Cold Storage Guidance Footer */}
+      {/* 5. Honest record guidance */}
       <aside className="p-4 rounded-2xl bg-surface-container-lowest border border-surface-container-high flex items-center gap-3 shadow-xs">
-        <span className="material-symbols-outlined text-secondary text-[24px]">archive</span>
+        <span className="material-symbols-outlined text-secondary text-[24px]">info</span>
         <div className="text-xs">
-          <span className="font-bold text-on-surface block">Need records older than 90 days?</span>
+          <span className="font-bold text-on-surface block">About these records</span>
           <span className="text-on-surface-variant">
-            Historical reviews are persisted to immutable cold storage. Query by dossier hash or brand rulebook version to retrieve full attestation packs.
+            Sample entries are illustrative. Records created in the public demo exist only in the current browser session and are lost on refresh; they are not server-stored, cryptographically attested, or legal certification.
           </span>
         </div>
       </aside>

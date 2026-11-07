@@ -27,7 +27,7 @@ const upload = multer({
 const app = express();
 // Render provides PORT for the public web service. Keep BACKEND_PORT as a
 // local-development fallback only so it cannot override Render's assigned port.
-const PORT = process.env.PORT || process.env.BACKEND_PORT || 3000;
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
 
 // CORS configured for credentials (cookies)
 app.use(cors({

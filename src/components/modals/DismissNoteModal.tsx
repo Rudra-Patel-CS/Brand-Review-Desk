@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ComplianceFinding } from '../../utils/rulesEngine.js';
 
 interface DismissNoteModalProps {
@@ -14,7 +14,11 @@ export const DismissNoteModal: React.FC<DismissNoteModalProps> = ({
   finding,
   onConfirmDismiss
 }) => {
-  const [note, setNote] = useState('Reviewed by counsel. Exemption granted under documented brand indemnity.');
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (isOpen) setNote('');
+  }, [isOpen, finding?.id]);
 
   if (!isOpen || !finding) return null;
 
@@ -40,7 +44,7 @@ export const DismissNoteModal: React.FC<DismissNoteModalProps> = ({
 
         <div className="p-5 space-y-3">
           <p className="text-xs text-on-surface-variant">
-            Document legal justification or business exception for bypassing{' '}
+            Record why this finding is being dismissed. This note is part of the review export for{' '}
             <span className="font-semibold text-on-surface">{finding.ruleTitle}</span>.
           </p>
 
@@ -48,7 +52,7 @@ export const DismissNoteModal: React.FC<DismissNoteModalProps> = ({
             rows={3}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Specify reason for waiver or contextual exception..."
+            placeholder="Enter the reason for dismissing this finding..."
             className="w-full p-2.5 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
@@ -63,11 +67,12 @@ export const DismissNoteModal: React.FC<DismissNoteModalProps> = ({
           </button>
           <button
             type="button"
+            disabled={!note.trim()}
             onClick={() => {
-              onConfirmDismiss(finding.id, note);
+              onConfirmDismiss(finding.id, note.trim());
               onClose();
             }}
-            className="px-4 py-2 rounded bg-surface-container-highest hover:bg-surface-container-high text-on-surface text-xs font-semibold shadow-sm"
+            className="px-4 py-2 rounded bg-surface-container-highest hover:bg-surface-container-high text-on-surface text-xs font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Record Note & Dismiss
           </button>

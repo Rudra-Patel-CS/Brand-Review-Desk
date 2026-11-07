@@ -27,6 +27,7 @@ export interface ComplianceFinding {
   suggestedCorrection?: string;
   status: 'open' | 'applied' | 'dismissed' | 'manual_reviewed';
   dismissNote?: string;
+  queuedCreativeCorrection?: string;
   bbox?: { top: number; left: number; width: number; height: number }; // Percentage coords on image
 }
 
@@ -124,6 +125,7 @@ export interface CampaignPreset {
   changesRequestedBy?: string;
   changesRequestedAt?: string | Date;
   comments?: CampaignComment[];
+  workflowEvents?: WorkflowEvent[];
   safeZone?: any;
   sourceName?: string;
   sourceUrl?: string;
@@ -133,6 +135,7 @@ export interface CampaignPreset {
   sourceDescription?: string;
   referenceOnly?: boolean;
   isDemo?: boolean;
+  isDemoSample?: boolean;
   updatedAt?: string | Date;
   createdAt?: string | Date;
 }
@@ -149,6 +152,8 @@ export interface ReviewRecord {
   reviewerRole: string;
   auditId: string;
   sha256Hash: string;
+  isSample?: boolean;
+  isPublicDemo?: boolean;
   status: 'approved' | 'conditional' | 'rejected';
   findingsCount: number;
   clearedCount: number;

@@ -68,7 +68,7 @@ export interface OverlapDetectionResult {
 }
 
 export const SAFE_ZONE_DISCLAIMER =
-  'Platform safe-zone analysis provides layout guidance based on official creative guidelines and does not guarantee final platform rendering across all client device viewports.';
+  'Layout guidance only: this compares detected OCR text boxes with configured safe-zone regions. Manually inspect the creative; this does not verify logos, contrast, current platform UI, or final rendering.';
 
 export function getAllPlatforms(): PlatformSpec[] {
   return (platformSpecsData.platforms || []) as PlatformSpec[];
@@ -286,4 +286,3 @@ export function detectSafeZoneOverlaps(
     totalObscuredCount: overlaps.length
   };
 }
-

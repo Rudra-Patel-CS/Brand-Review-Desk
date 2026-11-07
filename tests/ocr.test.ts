@@ -19,6 +19,10 @@ let testAdminId: string = '';
 const TEST_PNG_PATH = path.resolve(__dirname, '../assets/freshbites-organic-promo.png');
 
 test('Setup OCR test server & authenticate session', async () => {
+  db.setIsolatedTestMode(true);
+  db.memoryStore.users = [];
+  db.memoryStore.sessions = [];
+  db.memoryStore.campaigns = [];
   const { app } = require('../server');
   testServer = http.createServer(app);
 
@@ -275,6 +279,7 @@ test('Feature 3 - Rule evaluation against extracted and corrected artwork text',
 });
 
 test('Teardown OCR test server', async () => {
+  db.setIsolatedTestMode(false);
   await ocrEngine.terminateWorker();
   if (testServer) {
     if (typeof (testServer as any).closeAllConnections === 'function') {

@@ -131,6 +131,10 @@ function createMultipartBody(fieldName: string, filename: string, mimeType: stri
 }
 
 test('Setup storage test server & authenticate admin', async () => {
+  db.setIsolatedTestMode(true);
+  db.memoryStore.users = [];
+  db.memoryStore.sessions = [];
+  db.memoryStore.campaigns = (db.commonsCampaigns || []).map((c: any) => ({ ...c }));
   server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const address = server.address() as any;
@@ -334,6 +338,7 @@ test('Feature 2 - Commons references and external URLs remain preserved', async 
 });
 
 test('Teardown storage test server', async () => {
+  db.setIsolatedTestMode(false);
   if (server) {
     if (typeof (server as any).closeAllConnections === 'function') {
       (server as any).closeAllConnections();

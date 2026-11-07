@@ -10,6 +10,42 @@
 
 ---
 
+## Public Judge Demo
+
+The GitHub Pages workflow builds a no-login, browser-only demo for judges. It opens directly into the sample workspace, supports rule-based copy review, local Tesseract OCR, creative upload, workflow actions, review history, and JSON exports. Demo changes are temporary and remain in page memory; no account or database is used. Uploaded creative images and OCR processing stay in the browser.
+
+Intended public URL (available after Pages is enabled and the workflow succeeds):
+
+`https://rudra-patel-cs.github.io/Brand-Review-Desk/`
+
+The deployment workflow is configured in this repository, but the live URL is not confirmed until the repository owner enables Pages and a deployment succeeds. One-time repository setup: in **Settings → Pages**, set the source to **GitHub Actions**, then run or push to the `main` branch. The workflow token cannot enable Pages for a repository where Pages has never been configured.
+
+For a local preview of the same no-login build:
+
+```bash
+VITE_PUBLIC_DEMO_MODE=true npm run build
+npm run preview -- --host 127.0.0.1
+```
+
+The normal server-backed build retains its authenticated login and MongoDB workflows.
+
+### Public demo scope and limitations
+
+- The GitHub Pages build sets `VITE_PUBLIC_DEMO_MODE=true`; it bypasses sign-in for this static demo only. It does not expose or disable authentication on the normal server-backed deployment.
+- The public demo uses in-memory browser state. Uploaded creative, OCR results, rule edits, findings, decisions, approvals, and exports are not sent to a backend and are lost when the page is reloaded.
+- Caption and OCR text findings come from the configured deterministic rules. The app does not independently verify factual claims, evidence, legal compliance, trademarks, or visual brand requirements.
+- Tesseract.js performs actual browser OCR on uploaded raster artwork; confidence and boxes come from OCR output. OCR can miss or misread text. Safe-zone checks compare available OCR boxes with configured format zones and are guidance only; visual layout, contrast, logo placement, and platform rendering still require human inspection.
+- Sample archive entries are illustrative, have no genuine reviewer attestation or sample hash, and are explicitly labeled. A hash created during the public demo is a local content digest, not a server-side signature.
+
+### GitHub Pages deployment
+
+1. In the repository settings, open **Pages** and select **GitHub Actions** as the source.
+2. Push to `main` or run **Actions → Deploy public demo → Run workflow**.
+3. Wait for the workflow to complete successfully, then open the URL above in a private/incognito window. Confirm the workspace opens without a sign-in screen and exercise review, OCR, decisions, approval, and export.
+4. If Pages is unavailable or the workflow has not completed, use the Actions run as the deployment status source; do not treat the intended URL as a verified live link.
+
+No MongoDB URI, password, or other application credential is required by the static demo workflow. For a server-backed deployment, configure MongoDB and authentication secrets only in the hosting provider's secret manager/environment; never put them in Vite variables or client-side source. Vite-exposed values are public.
+
 ## Architecture & Features
 
 ### 1. Secure Authentication & Role-Based Access Control (RBAC)
@@ -112,8 +148,8 @@ Documented environment variable **names**:
 | :--- | :--- | :--- |
 | `MONGO_URI` | MongoDB Atlas or local MongoDB connection URI | `mongodb://localhost:27017` |
 | `DB_NAME` | MongoDB database name | `Brand_Review_Desk` |
-| `BACKEND_PORT` | Port for Express API server | `3000` |
-| `PORT` | Fallback port for Express API server | `3000` |
+| `BACKEND_PORT` | Port for Express API server | `5000` |
+| `PORT` | Fallback port for Express API server | `5000` |
 | `AUTH_SECRET` | Secret key used for session cryptographic signatures | *(Set random string)* |
 | `AUTH_TOKEN_TTL` | Session duration in seconds | `604800` (7 days) |
 | `DNS_SERVERS` | Custom DNS resolvers for MongoDB Atlas SRV lookup (optional) | `8.8.8.8,1.1.1.1` |
@@ -139,7 +175,7 @@ npm install
    ```bash
    npm start
    ```
-2. Navigate to `http://localhost:3000`.
+2. Navigate to `http://localhost:3000` (Vite frontend; Express API defaults to port `5000`).
 3. Because the database contains 0 users, the portal automatically presents the **First-Admin Bootstrap** form.
 4. Enter an administrator username, email, and strong password (minimum 8 characters).
 5. Once submitted, the initial administrator account is created with the `admin` role and the portal automatically locks public registration.

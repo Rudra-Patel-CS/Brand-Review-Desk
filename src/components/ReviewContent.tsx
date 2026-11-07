@@ -4,12 +4,15 @@ import {
   CampaignPreset,
   ComplianceFinding,
   BrandRule,
+  OcrToken,
   calculateComplianceScore,
   applyCorrectionToCaption,
   runComplianceAudit
 } from '../utils/rulesEngine.js';
 
 import { getCsrfToken, AuthUser } from '../utils/auth.js';
+import { recognizeInBrowser } from '../utils/browserOcr.js';
+import { downloadBlob } from '../utils/download.js';
 import { WorkflowActionModal, WorkflowModalAction } from './modals/WorkflowActionModal.js';
 import { EventHistoryModal } from './modals/EventHistoryModal.js';
 import {
@@ -57,7 +60,9 @@ interface ReviewContentProps {
   onSelectCampaign: (campaign: CampaignPreset) => void;
   rules: BrandRule[];
   currentUser?: AuthUser;
+  isDemoMode?: boolean;
   onOpenUpload: () => void;
+  onReplaceCreative: () => void;
   onOpenOcrText: (ocrText: string, confidence: number, campaign?: CampaignPreset) => void;
   onUpdateCampaign?: (campaign: CampaignPreset) => void;
   onOpenApproveModal: (campaign: CampaignPreset, caption: string, findings: ComplianceFinding[]) => void;
@@ -72,7 +77,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   onSelectCampaign,
   rules,
   currentUser,
+  isDemoMode = false,
   onOpenUpload,
+  onReplaceCreative,
   onOpenOcrText,
   onUpdateCampaign,
   onOpenApproveModal,
@@ -177,45 +184,38 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setScanStatusMessage('Connecting to Tesseract OCR engine...');
 
     try {
-      const csrfToken = getCsrfToken();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (csrfToken) {
-        headers['X-CSRF-Token'] = csrfToken;
-      }
-
       setScanStatusMessage('Analyzing artwork pixels & recognizing text...');
 
-      const payload: Record<string, string> = {};
-      if (activeCampaign.assetId) {
-        payload.assetId = activeCampaign.assetId;
-      } else if (activeCampaign.imageUrl) {
-        payload.imageUrl = activeCampaign.imageUrl;
+      let extracted: string;
+      let conf: number;
+      let lines: OcrToken[];
+      let words: OcrToken[];
+      if (isDemoMode) {
+        const result = await recognizeInBrowser(activeCampaign.imageUrl);
+        ({ text: extracted, confidence: conf, lines, words } = result);
+      } else {
+        const csrfToken = getCsrfToken();
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+        const payload: Record<string, string> = {};
+        if (activeCampaign.assetId) payload.assetId = activeCampaign.assetId;
+        else if (activeCampaign.imageUrl) payload.imageUrl = activeCampaign.imageUrl;
+
+        const res = await fetch('/api/ocr/extract', {
+          method: 'POST',
+          credentials: 'include',
+          headers,
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || `OCR Engine request failed with status ${res.status}`);
+        }
+        extracted = data.text || '';
+        conf = typeof data.confidence === 'number' ? data.confidence : 0;
+        lines = Array.isArray(data.lines) ? data.lines : [];
+        words = Array.isArray(data.words) ? data.words : [];
       }
-
-      const res = await fetch('/api/ocr/extract', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify(payload)
-      });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.error || `OCR Engine request failed with status ${res.status}`);
-      }
-
-      const extracted = data.text || '';
-      const conf = typeof data.confidence === 'number' ? data.confidence : 0;
-      const lines = Array.isArray(data.lines) ? data.lines : [];
-      const words = Array.isArray(data.words) ? data.words : [];
 
       setCurrentOcrText(extracted);
 
@@ -231,8 +231,14 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
 
       const updatedFindings = detected.map((df) => {
         const existing = findings.find((f) => f.ruleId === df.ruleId);
-        if (existing && existing.status !== 'open') {
+        if (
+          existing &&
+          (existing.status === 'dismissed' || existing.status === 'manual_reviewed')
+        ) {
           return { ...df, status: existing.status, dismissNote: existing.dismissNote };
+        }
+        if (existing?.queuedCreativeCorrection) {
+          return { ...df, queuedCreativeCorrection: existing.queuedCreativeCorrection };
         }
         return df;
       });
@@ -275,11 +281,17 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
         activeCampaign.ocrLines,
         activeCampaign.ocrWords
       );
-      // Preserve existing applied/dismissed findings if they still match rule
+      // Keep explicit human decisions, but reopen findings still present after re-audit.
       const updatedFindings = detected.map((df) => {
         const existing = findings.find((f) => f.ruleId === df.ruleId);
-        if (existing && existing.status !== 'open') {
+        if (
+          existing &&
+          (existing.status === 'dismissed' || existing.status === 'manual_reviewed')
+        ) {
           return { ...df, status: existing.status, dismissNote: existing.dismissNote };
+        }
+        if (existing?.queuedCreativeCorrection) {
+          return { ...df, queuedCreativeCorrection: existing.queuedCreativeCorrection };
         }
         return df;
       });
@@ -287,6 +299,11 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
       setIsScanning(false);
       setScanStatusMessage('');
       setAutosaveStatus('Re-audit complete • 100% matched');
+      onUpdateCampaign?.({
+        ...activeCampaign,
+        caption: currentCaption,
+        initialFindings: updatedFindings
+      });
     }, 400);
   };
 
@@ -294,8 +311,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   const handleApplySuggestion = (finding: ComplianceFinding) => {
     if (!finding.suggestedCorrection) return;
 
+    let updatedCaption = currentCaption;
     if (finding.source === 'caption' || finding.source === 'both') {
-      const updatedCaption = applyCorrectionToCaption(
+      updatedCaption = applyCorrectionToCaption(
         currentCaption,
         finding.matchedText,
         finding.suggestedCorrection
@@ -303,24 +321,56 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
       setCurrentCaption(updatedCaption);
     }
 
-    setFindings((prev) =>
-      prev.map((f) => (f.id === finding.id ? { ...f, status: 'applied' } : f))
+    if (finding.source === 'ocr' || finding.source === 'both') {
+      const updatedFindings = findings.map((item) =>
+          item.id === finding.id
+            ? { ...item, queuedCreativeCorrection: finding.suggestedCorrection }
+            : item
+      );
+      setFindings(updatedFindings);
+      onUpdateCampaign?.({
+        ...activeCampaign,
+        caption: updatedCaption,
+        initialFindings: updatedFindings
+      });
+      setAutosaveStatus('Creative copy change queued • replace artwork before approval');
+      setWorkflowToast(
+        finding.source === 'both'
+          ? 'Caption updated. Replace the artwork before this finding can be cleared.'
+          : 'Replace the artwork before this image finding can be cleared.'
+      );
+      setTimeout(() => setWorkflowToast(null), 4000);
+      return;
+    }
+
+    const updatedFindings = findings.map((item) =>
+      item.id === finding.id ? { ...item, status: 'applied' as const } : item
     );
+    setFindings(updatedFindings);
+    onUpdateCampaign?.({
+      ...activeCampaign,
+      caption: updatedCaption,
+      initialFindings: updatedFindings
+    });
     setAutosaveStatus(`Applied fix: "${finding.suggestedCorrection}"`);
   };
 
   // Handle Undo finding
   const handleUndoFinding = (findingId: string) => {
-    setFindings((prev) =>
-      prev.map((f) => (f.id === findingId ? { ...f, status: 'open', dismissNote: undefined } : f))
+    const updatedFindings = findings.map((f) =>
+      f.id === findingId ? { ...f, status: 'open' as const, dismissNote: undefined } : f
     );
+    setFindings(updatedFindings);
+    onUpdateCampaign?.({ ...activeCampaign, initialFindings: updatedFindings });
   };
 
   // Handle Manual Reviewed override
   const handleMarkManualReviewed = (findingId: string) => {
-    setFindings((prev) =>
-      prev.map((f) => (f.id === findingId ? { ...f, status: 'manual_reviewed' } : f))
+    const updatedFindings = findings.map((f) =>
+      f.id === findingId ? { ...f, status: 'manual_reviewed' as const } : f
     );
+    setFindings(updatedFindings);
+    onUpdateCampaign?.({ ...activeCampaign, initialFindings: updatedFindings });
   };
 
   // Select finding from click on OCR box
@@ -381,6 +431,73 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     criticalOverrideReason?: string;
     allowSelfApproval?: boolean;
   }) => {
+    if (isDemoMode) {
+      if (data.targetStatus === 'approved') {
+        onOpenApproveModal(activeCampaign, currentCaption, findings);
+        return;
+      }
+
+      const timestamp = new Date().toISOString();
+      const updatedCampaign: CampaignPreset = {
+        ...activeCampaign,
+        caption: currentCaption,
+        initialFindings: findings,
+        updatedAt: timestamp,
+        workflowEvents: [
+          ...(activeCampaign.workflowEvents || []),
+          {
+            id: `event-${Date.now()}`,
+            campaignId: activeCampaign.id,
+            actionType: data.targetStatus,
+            fromStatus: currentStatus,
+            toStatus: data.targetStatus,
+            user: {
+              id: currentUser?.id || 'public-demo',
+              username: currentUser?.username || 'Public Demo',
+              role: currentUser?.role || 'admin'
+            },
+            timestamp,
+            details: {
+              ...(data.notes ? { notes: data.notes } : {}),
+              ...(data.requestedChanges ? { requestedChanges: data.requestedChanges } : {}),
+              ...(data.criticalOverrideReason
+                ? { criticalOverrideReason: data.criticalOverrideReason }
+                : {}),
+              ...(data.targetStatus === 'rejected' && data.notes
+                ? { rejectionReason: data.notes }
+                : {})
+            }
+          }
+        ]
+      };
+      if (data.targetStatus === 'in_review') {
+        updatedCampaign.status = 'in_review';
+        updatedCampaign.reviewedBy = currentUser?.username || 'Public Demo';
+        updatedCampaign.reviewedAt = new Date().toISOString();
+      } else if (data.targetStatus === 'changes_requested') {
+        updatedCampaign.status = 'changes_requested';
+        updatedCampaign.requestedChanges = data.requestedChanges;
+        updatedCampaign.changesRequestedBy = currentUser?.username || 'Public Demo';
+        updatedCampaign.changesRequestedAt = new Date().toISOString();
+      } else if (data.targetStatus === 'approved') {
+        updatedCampaign.status = 'approved';
+        updatedCampaign.approvedBy = currentUser?.username || 'Public Demo';
+        updatedCampaign.approvedAt = new Date().toISOString();
+        updatedCampaign.criticalOverrideReason = data.criticalOverrideReason;
+      } else if (data.targetStatus === 'rejected') {
+        updatedCampaign.status = 'rejected';
+        updatedCampaign.rejectedBy = currentUser?.username || 'Public Demo';
+        updatedCampaign.rejectedAt = new Date().toISOString();
+        updatedCampaign.rejectionReason = data.notes;
+      } else {
+        throw new Error('Unsupported demo workflow transition.');
+      }
+      onUpdateCampaign?.(updatedCampaign);
+      setWorkflowToast(`Demo campaign status updated to "${data.targetStatus.replace(/_/g, ' ')}"`);
+      setTimeout(() => setWorkflowToast(null), 3500);
+      return;
+    }
+
     const csrfToken = getCsrfToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -412,6 +529,37 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   };
 
   const handleAddComment = async (commentText: string) => {
+    if (isDemoMode) {
+      const comment = {
+        id: `comment-${Date.now()}`,
+        user: {
+          id: currentUser?.id || 'public-demo',
+          username: currentUser?.username || 'Public Demo',
+          role: currentUser?.role || 'admin'
+        },
+        comment: commentText,
+        timestamp: new Date().toISOString()
+      };
+      onUpdateCampaign?.({
+        ...activeCampaign,
+        comments: [...(activeCampaign.comments || []), comment],
+        workflowEvents: [
+          ...(activeCampaign.workflowEvents || []),
+          {
+            id: `event-${Date.now()}`,
+            campaignId: activeCampaign.id,
+            actionType: 'comment_added',
+            user: comment.user,
+            timestamp: comment.timestamp,
+            details: { comment: comment.comment }
+          }
+        ]
+      });
+      setWorkflowToast('Demo comment added to this session');
+      setTimeout(() => setWorkflowToast(null), 3000);
+      return;
+    }
+
     const csrfToken = getCsrfToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -440,6 +588,18 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   };
 
   const handleExportAudit = () => {
+    if (isDemoMode) {
+      const report = {
+        campaign: activeCampaign,
+        exportedAt: new Date().toISOString(),
+        demo: true
+      };
+      downloadBlob(
+        new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
+        `review-audit-${activeCampaign.code}.json`
+      );
+      return;
+    }
     window.open(`/api/workspace/campaigns/${encodeURIComponent(activeCampaign.id)}/export`, '_blank');
   };
 
@@ -979,7 +1139,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={onOpenUpload}
+                  onClick={onReplaceCreative}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface text-xs font-semibold border border-surface-container-high transition-colors shadow-xs"
                 >
                   <span className="material-symbols-outlined text-[16px]">drive_file_move</span>
@@ -1005,6 +1165,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 <span className="material-symbols-outlined text-secondary text-[20px]">aspect_ratio</span>
                 <span className="text-xs font-bold text-on-surface uppercase tracking-wide">
                   Platform Safe-Zone & Layout Guidance
+                </span>
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                  Visual review required
                 </span>
               </div>
 
@@ -1099,14 +1262,14 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   <div className="p-2.5 rounded-xl bg-secondary/10 border border-secondary/30 text-secondary flex items-center gap-2 text-xs">
                     <span className="material-symbols-outlined text-[18px]">check_circle</span>
                     <span>
-                      Safe-Zone Clearance Verified: Detected text elements and compliance claims avoid critical platform interface overlays.
+                      No overlap detected in available OCR text boxes. Manually inspect the creative before approval.
                     </span>
                   </div>
                 ) : (
                   <div className="p-2.5 rounded-xl bg-surface-container-low border border-surface-container-high text-on-surface-variant flex items-center gap-2 text-xs">
                     <span className="material-symbols-outlined text-[18px]">info</span>
                     <span>
-                      Full Canvas Safe: Native platform interface elements do not intrude into the artwork canvas for this format.
+                      No safe-zone data is configured for this format. Manually inspect the creative before approval.
                     </span>
                   </div>
                 )}
@@ -1376,7 +1539,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                           Suggested Compliant Correction:
                         </span>
                         <span className="font-mono text-[10px] text-secondary font-bold">
-                          Pre-Approved
+                          Suggested
                         </span>
                       </div>
                       <div className="font-serif text-xs text-on-surface italic font-medium">
@@ -1385,10 +1548,16 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                     </div>
                   )}
 
+                  {finding.queuedCreativeCorrection && !isResolved && (
+                    <div className="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-950">
+                      <strong>Creative change queued:</strong> “{finding.queuedCreativeCorrection}”. This tool cannot edit image pixels — update the source artwork, use <strong>Replace Creative</strong>, then re-run OCR and re-check before approval.
+                    </div>
+                  )}
+
                   {/* Dismissed note if present */}
                   {finding.dismissNote && (
                     <div className="mt-2 p-2 rounded bg-surface-container-high border border-surface-container-highest text-[11px] text-on-surface-variant">
-                      <strong className="text-on-surface">Counsel Waiver Note:</strong> {finding.dismissNote}
+                      <strong>Dismissal note:</strong> {finding.dismissNote}
                     </div>
                   )}
 
@@ -1403,7 +1572,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                             className="flex-1 min-w-[120px] px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all flex items-center justify-center gap-1 shadow-xs"
                           >
                             <span className="material-symbols-outlined text-[15px]">auto_fix_high</span>
-                            Apply Suggestion
+                            {finding.source === 'ocr' || finding.source === 'both'
+                              ? 'Queue Creative Fix'
+                              : 'Apply Suggestion'}
                           </button>
                         )}
                         <button
@@ -1522,6 +1693,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
         onClose={() => setIsEventHistoryOpen(false)}
         campaign={activeCampaign}
         onAddComment={handleAddComment}
+        isDemoMode={isDemoMode}
       />
     </div>
   );

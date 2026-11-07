@@ -1,5 +1,6 @@
 import { BrandRule, CampaignPreset, ReviewRecord, DEFAULT_RULES } from '../utils/rulesEngine.js';
 import demoCatalog from '../../data/demo-catalog.json';
+import { publicAssetUrl } from '../utils/publicDemo.js';
 
 export interface Brand {
   id: string;
@@ -38,7 +39,12 @@ export const BRANDS: Brand[] = [
   ...(demoCatalog.brands as unknown as Brand[])
 ];
 
-export const INITIAL_PRESETS: CampaignPreset[] = [
+const DEMO_CAMPAIGNS = (demoCatalog.campaigns as unknown as CampaignPreset[]).map((campaign) => ({
+  ...campaign,
+  imageUrl: publicAssetUrl(campaign.imageUrl)
+}));
+
+export const INITIAL_PRESETS: CampaignPreset[] = ([
   {
     id: 'preset-freshbites-glow',
     code: 'CAMPAIGN-0942',
@@ -48,7 +54,7 @@ export const INITIAL_PRESETS: CampaignPreset[] = [
     channel: 'IG / TikTok Reels (9:16)',
     format: 'Short-Form Video & Story',
     aspectRatio: '4/5',
-    imageUrl: '/assets/aistudio/screen_81b71146.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_81b71146.png'),
     caption: 'Revive your day with 100% Detox cold-pressed glow! Scientifically formulated to supercharge your immunity in 24 hours. #FreshBites #Immunity #CleanEats',
     ocrText: 'REVIVE AVOCADO GLOW Cold-Pressed Green Wellness 100% Detox • Immunity Booster Organic Avocado, Spinach, Kale, Wheatgrass, Ginger, Lemon, Apple 355ml SHOP NOW Available at ReviveWellness.com',
     ocrConfidence: 98.4,
@@ -103,7 +109,7 @@ export const INITIAL_PRESETS: CampaignPreset[] = [
     channel: 'Instagram Carousel & Print Ad',
     format: 'Multi-Asset Feast Promotion',
     aspectRatio: '4/3',
-    imageUrl: '/assets/aistudio/screen_d1dae6af.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_d1dae6af.png'),
     caption: 'Celebrate the season with Gourmet Organic Selections! Book your festive catering now. Order by Dec 15th at FestiveHoliday.com. Prepared in a facility handling tree nuts. #HolidayFeast #ArkaFoods',
     ocrText: 'HARVEST & HOLIDAY FEAST CELEBRATE THE SEASON Gourmet Organic Selections BOOK YOUR FESTIVE CATERING NOW! ORDER BY DEC 15TH | FESTIVEHOLIDAY.COM THE GOURMET TABLE',
     ocrConfidence: 99.2,
@@ -143,7 +149,7 @@ export const INITIAL_PRESETS: CampaignPreset[] = [
     channel: 'Paid Social & Display Banner',
     format: '16:9 Display & Story Ad',
     aspectRatio: '16/9',
-    imageUrl: '/assets/aistudio/screen_4c96d80f.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_4c96d80f.png'),
     caption: 'Flash Sale 50% Off! Limited time deal on AURA Titanium Noise-Cancelling Headphones. Shop now before countdown ends! Active Noise Cancellation, 30H Playtime, Hi-Res Audio. #AudioGear #NovaTech',
     ocrText: 'FLASH SALE 50% OFF! LIMITED TIME DEAL 02:45:38 Hours Mins Secs AURA SHOP NOW ACTIVE NOISE CANCELLATION 30H PLAYTIME HI-RES AUDIO',
     ocrConfidence: 97.9,
@@ -177,10 +183,10 @@ export const INITIAL_PRESETS: CampaignPreset[] = [
       }
     ]
   },
-  ...(demoCatalog.campaigns as unknown as CampaignPreset[])
-];
+  ...DEMO_CAMPAIGNS
+] satisfies CampaignPreset[]).map((campaign) => ({ ...campaign, isDemoSample: true }));
 
-export const INITIAL_REVIEWS: ReviewRecord[] = [
+export const INITIAL_REVIEWS: ReviewRecord[] = ([
   {
     id: 'rev-9042',
     dossierNumber: 'BRD-9042',
@@ -197,7 +203,7 @@ export const INITIAL_REVIEWS: ReviewRecord[] = [
     findingsCount: 3,
     clearedCount: 3,
     openCount: 0,
-    imageUrl: '/assets/aistudio/screen_d1dae6af.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_d1dae6af.png'),
     oldCopy: 'The healthiest feast in the county with zero allergens. Book now!',
     newCopy: 'Gourmet Organic Selections. Prepared in a facility handling tree nuts. Order by Dec 15th.',
     findings: [
@@ -242,7 +248,7 @@ export const INITIAL_REVIEWS: ReviewRecord[] = [
     findingsCount: 2,
     clearedCount: 1,
     openCount: 1,
-    imageUrl: '/assets/aistudio/screen_4c96d80f.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_4c96d80f.png'),
     oldCopy: 'Flash Sale 50% Off! Unlimited supply. Shop now.',
     newCopy: 'Flash Sale 50% Off! *Discount applies to MSRP. Limited stock available.',
     findings: [
@@ -277,7 +283,7 @@ export const INITIAL_REVIEWS: ReviewRecord[] = [
     findingsCount: 3,
     clearedCount: 1,
     openCount: 2,
-    imageUrl: '/assets/aistudio/screen_81b71146.png',
+    imageUrl: publicAssetUrl('assets/aistudio/screen_81b71146.png'),
     oldCopy: 'Guaranteed complete cold defense in 24 hours. The miracle cure.',
     findings: [
       {
@@ -294,7 +300,7 @@ export const INITIAL_REVIEWS: ReviewRecord[] = [
     ],
     notes: 'Rejected. Agency must revise creative headline and resubmit proof.'
   }
-];
+] satisfies ReviewRecord[]).map((review) => ({ ...review, isSample: true, sha256Hash: '' }));
 
 export const APPROVED_CLAIMS = [
   {

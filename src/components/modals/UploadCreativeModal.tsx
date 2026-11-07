@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Brand } from '../../data/mockData.js';
 import { CampaignPreset, BrandRule, DEFAULT_RULES, runComplianceAudit } from '../../utils/rulesEngine.js';
 import { getCsrfToken } from '../../utils/auth.js';
+import { isPublicDemoMode, publicAssetUrl } from '../../utils/publicDemo.js';
+import { recognizeInBrowser } from '../../utils/browserOcr.js';
 
 interface UploadCreativeModalProps {
   isOpen: boolean;
@@ -10,6 +12,8 @@ interface UploadCreativeModalProps {
   activeBrand: Brand;
   rules?: BrandRule[];
   onAddCampaign: (newCampaign: CampaignPreset) => void;
+  replaceCampaign?: CampaignPreset | null;
+  onReplaceCampaign?: (campaign: CampaignPreset) => void;
 }
 
 const MAX_SIZE_BYTES = 15 * 1024 * 1024; // 15MB
@@ -20,7 +24,9 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   brands,
   activeBrand,
   rules = DEFAULT_RULES,
-  onAddCampaign
+  onAddCampaign,
+  replaceCampaign = null,
+  onReplaceCampaign
 }) => {
   const [title, setTitle] = useState('');
   const [agency, setAgency] = useState('');
@@ -28,13 +34,44 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   const [channel, setChannel] = useState('IG / TikTok Reels (9:16)');
   const [format, setFormat] = useState('Short-Form Video Ad');
   const [caption, setCaption] = useState('Fresh organic selections made for your healthy lifestyle! 100% pure quality. #CleanNutrition');
-  const [previewUrl, setPreviewUrl] = useState<string>('/assets/aistudio/screen_81b71146.png');
+  const [previewUrl, setPreviewUrl] = useState<string>(publicAssetUrl('assets/aistudio/screen_81b71146.png'));
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStep, setUploadStep] = useState<string>('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const selectedPreviewUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setTitle(replaceCampaign?.title || '');
+    setAgency(replaceCampaign?.agency || '');
+    setSelectedBrandId(replaceCampaign?.brandId || activeBrand.id);
+    setChannel(replaceCampaign?.channel || 'IG / TikTok Reels (9:16)');
+    setFormat(replaceCampaign?.format || 'Short-Form Video Ad');
+    setCaption(replaceCampaign?.caption || 'Fresh organic selections made for your healthy lifestyle! 100% pure quality. #CleanNutrition');
+    setPreviewUrl(replaceCampaign?.imageUrl || publicAssetUrl('assets/aistudio/screen_81b71146.png'));
+    setSelectedFile(null);
+    setUploadError(null);
+  }, [isOpen, activeBrand.id, replaceCampaign]);
+
+  useEffect(() => {
+    return () => {
+      if (selectedPreviewUrlRef.current) {
+        URL.revokeObjectURL(selectedPreviewUrlRef.current);
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
+
+  const handleClose = () => {
+    if (selectedPreviewUrlRef.current) {
+      URL.revokeObjectURL(selectedPreviewUrlRef.current);
+      selectedPreviewUrlRef.current = null;
+    }
+    setSelectedFile(null);
+    onClose();
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setUploadError(null);
@@ -42,11 +79,21 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
     if (file) {
       if (file.size > MAX_SIZE_BYTES) {
         setUploadError(`File is too large (${Math.round(file.size / 1024 / 1024)}MB). Maximum allowed size is 15MB.`);
+        setSelectedFile(null);
+        if (selectedPreviewUrlRef.current) {
+          URL.revokeObjectURL(selectedPreviewUrlRef.current);
+          selectedPreviewUrlRef.current = null;
+        }
+        setPreviewUrl(replaceCampaign?.imageUrl || publicAssetUrl('assets/aistudio/screen_81b71146.png'));
         return;
       }
 
+      if (selectedPreviewUrlRef.current) {
+        URL.revokeObjectURL(selectedPreviewUrlRef.current);
+      }
       setSelectedFile(file);
       const url = URL.createObjectURL(file);
+      selectedPreviewUrlRef.current = url;
       setPreviewUrl(url);
       if (!title) {
         setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
@@ -58,7 +105,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
     e.preventDefault();
     setUploadError(null);
     setIsUploading(true);
-    setUploadStep('Storing asset in MongoDB GridFS...');
+    setUploadStep(isPublicDemoMode ? 'Preparing this creative in your browser...' : 'Storing asset in MongoDB GridFS...');
 
     try {
       let finalImageUrl = previewUrl;
@@ -72,7 +119,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
       }
 
       // If a real local file was chosen, upload it to MongoDB GridFS
-      if (selectedFile) {
+      if (selectedFile && !isPublicDemoMode) {
         const formData = new FormData();
         formData.append('file', selectedFile);
 
@@ -97,6 +144,14 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         finalImageUrl = data.url;
         assetId = data.assetId;
         assetMetadata = data.metadata;
+      } else if (selectedFile) {
+        finalImageUrl = previewUrl;
+        assetMetadata = {
+          mimeType: selectedFile.type,
+          size: selectedFile.size,
+          extension: selectedFile.name.split('.').pop(),
+          uploadedAt: new Date().toISOString()
+        };
       }
 
       // Perform genuine Optical Character Recognition on the creative image
@@ -107,14 +162,16 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
       let ocrWords: any[] = [];
 
       try {
-        const ocrPayload: Record<string, string> = {};
-        if (assetId) {
-          ocrPayload.assetId = assetId;
-        } else if (finalImageUrl) {
-          ocrPayload.imageUrl = finalImageUrl;
-        }
-
-        if (ocrPayload.assetId || ocrPayload.imageUrl) {
+        if (isPublicDemoMode && (selectedFile || finalImageUrl)) {
+          const result = await recognizeInBrowser(selectedFile || finalImageUrl);
+          ocrText = result.text;
+          ocrConfidence = result.confidence;
+          ocrLines = result.lines;
+          ocrWords = result.words;
+        } else if (assetId || finalImageUrl) {
+          const ocrPayload: Record<string, string> = assetId
+            ? { assetId }
+            : { imageUrl: finalImageUrl };
           const ocrRes = await fetch('/api/ocr/extract', {
             method: 'POST',
             credentials: 'include',
@@ -125,17 +182,21 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
             body: JSON.stringify(ocrPayload)
           });
 
-          if (ocrRes.ok) {
-            const ocrData = await ocrRes.json();
-            ocrText = ocrData.text || '';
-            ocrConfidence = typeof ocrData.confidence === 'number' ? ocrData.confidence : 0;
-            ocrLines = ocrData.lines || [];
-            ocrWords = ocrData.words || [];
+          const ocrData = await ocrRes.json().catch(() => null);
+          if (!ocrRes.ok) {
+            throw new Error(ocrData?.error || `OCR failed with status ${ocrRes.status}`);
           }
+          ocrText = ocrData?.text || '';
+          ocrConfidence = typeof ocrData?.confidence === 'number' ? ocrData.confidence : 0;
+          ocrLines = ocrData?.lines || [];
+          ocrWords = ocrData?.words || [];
         }
       } catch (ocrErr) {
-        // Genuine errors logged but do not prevent creative creation
-        console.warn('OCR extraction warning:', ocrErr);
+        throw new Error(
+          `OCR could not be completed, so this creative was not added. ${
+            ocrErr instanceof Error ? ocrErr.message : 'Unknown OCR error'
+          }`
+        );
       }
 
       const brand = brands.find((b) => b.id === selectedBrandId) || activeBrand;
@@ -152,15 +213,17 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
       );
 
       const newPreset: CampaignPreset = {
-        id: `campaign-${Date.now()}`,
-        code: campaignCode,
+        ...(replaceCampaign || {}),
+        id: replaceCampaign?.id || `campaign-${Date.now()}`,
+        code: replaceCampaign?.code || campaignCode,
+        isDemoSample: false,
         title: title.trim() || 'Untitled Campaign Asset',
         brandId: brand.id,
         brandName: brand.name,
         agency: agency.trim() || undefined,
         channel,
         format,
-        aspectRatio: '4/5',
+        aspectRatio: replaceCampaign?.aspectRatio || '4/5',
         imageUrl: finalImageUrl,
         assetId,
         assetMetadata,
@@ -171,11 +234,25 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         ocrLines,
         ocrWords,
         status: initialFindings.some((f) => f.severity === 'critical') ? 'action_required' : 'under_review',
-        initialFindings
+        initialFindings,
+        reviewedBy: undefined,
+        reviewerId: undefined,
+        approvedBy: undefined,
+        approverId: undefined,
+        approvedAt: undefined,
+        rejectedBy: undefined,
+        rejectedAt: undefined,
+        rejectionReason: undefined,
+        criticalOverrideReason: undefined,
+        requestedChanges: undefined
       };
 
-      onAddCampaign(newPreset);
-      onClose();
+      if (replaceCampaign && onReplaceCampaign) onReplaceCampaign(newPreset);
+      else onAddCampaign(newPreset);
+      if (selectedPreviewUrlRef.current === finalImageUrl) {
+        selectedPreviewUrlRef.current = null;
+      }
+      handleClose();
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Error uploading creative asset');
     } finally {
@@ -191,15 +268,17 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-secondary text-[22px]">add_photo_alternate</span>
             <div>
-              <h3 className="font-serif text-lg font-medium text-on-surface">Upload Campaign Creative</h3>
+              <h3 className="font-serif text-lg font-medium text-on-surface">
+                {replaceCampaign ? 'Replace Campaign Creative' : 'Upload Campaign Creative'}
+              </h3>
               <span className="text-xs text-on-surface-variant">
-                Stores image asset securely in MongoDB GridFS
+                {isPublicDemoMode ? 'Image and OCR are processed in this browser only' : 'Stores image asset securely in MongoDB GridFS'}
               </span>
             </div>
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface"
           >
             <span className="material-symbols-outlined text-[18px]">close</span>
@@ -221,7 +300,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
                 Creative Asset Artwork
               </label>
               <span className="text-[10px] font-mono text-secondary font-medium">
-                MongoDB GridFS Storage · Max 15MB
+                {isPublicDemoMode ? 'Local demo · Max 15MB' : 'MongoDB GridFS Storage · Max 15MB'}
               </span>
             </div>
             <div className="border-2 border-dashed border-surface-container-highest rounded-xl p-4 text-center hover:bg-surface-container-low transition-colors relative flex flex-col items-center justify-center">
@@ -243,6 +322,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
                 type="file"
                 accept="image/png,image/jpeg,image/webp,image/gif"
                 onChange={handleFileChange}
+                required={Boolean(replaceCampaign)}
                 className="absolute inset-0 opacity-0 cursor-pointer"
               />
             </div>
@@ -331,7 +411,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
           <div className="px-5 py-3.5 -mx-5 -mb-5 bg-surface-container-low border-t border-surface-container-high flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={isUploading}
               className="px-3 py-1.5 rounded text-xs font-medium text-on-surface-variant hover:text-on-surface"
             >
@@ -350,7 +430,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
               ) : (
                 <>
                   <span className="material-symbols-outlined text-[16px]">cloud_upload</span>
-                  Upload Creative Asset
+                  {replaceCampaign ? 'Replace Creative Asset' : 'Upload Creative Asset'}
                 </>
               )}
             </button>

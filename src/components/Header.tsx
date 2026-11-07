@@ -14,6 +14,7 @@ interface HeaderProps {
   onOpenUserManagement?: () => void;
   user: AuthUser;
   onLogout: () => void;
+  isDemoMode?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -26,7 +27,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDbStatus,
   onOpenUserManagement,
   user,
-  onLogout
+  onLogout,
+  isDemoMode = false
 }) => {
   const [profileOpen, setProfileOpen] = useState(false);
   const displayName = user.username;
@@ -113,10 +115,10 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 />
                 <span className="hidden sm:inline">
-                  {isOfflineMode ? 'Offline • Local Fallback' : 'Connected • MongoDB Atlas'}
+                  {isDemoMode ? 'Public Demo • Local Only' : isOfflineMode ? 'Offline • Local Fallback' : 'Connected • MongoDB Atlas'}
                 </span>
                 <span className="sm:hidden">
-                  {isOfflineMode ? 'Offline' : 'Atlas'}
+                  {isDemoMode ? 'Demo' : isOfflineMode ? 'Offline' : 'Atlas'}
                 </span>
               </button>
             </div>
@@ -226,7 +228,9 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                   <div className="flex justify-between gap-2">
                     <span>Session:</span>
-                    <span className="font-mono text-[10px] text-primary">Signed in · Secured</span>
+                    <span className="font-mono text-[10px] text-primary">
+                      {isDemoMode ? 'Public demo · no login' : 'Signed in · Secured'}
+                    </span>
                   </div>
                 </div>
                 <div className="pt-2 border-t border-surface-container-high space-y-1">
@@ -253,17 +257,19 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     Storage & Database Status
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProfileOpen(false);
-                      onLogout();
-                    }}
-                    className="w-full text-left text-xs text-error hover:underline font-semibold py-1 flex items-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[15px]">logout</span>
-                    Sign out
-                  </button>
+                  {!isDemoMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        onLogout();
+                      }}
+                      className="w-full text-left text-xs text-error hover:underline font-semibold py-1 flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">logout</span>
+                      Sign out
+                    </button>
+                  )}
                 </div>
               </div>
             </>

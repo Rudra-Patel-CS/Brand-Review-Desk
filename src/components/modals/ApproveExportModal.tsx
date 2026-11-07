@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CampaignPreset, ComplianceFinding } from '../../utils/rulesEngine.js';
+import { downloadBlob } from '../../utils/download.js';
 
 interface ApproveExportModalProps {
   isOpen: boolean;
@@ -7,7 +8,9 @@ interface ApproveExportModalProps {
   campaign: CampaignPreset;
   caption: string;
   findings: ComplianceFinding[];
+  reviewerName: string;
   onConfirmApproval: () => void;
+  isDemoMode?: boolean;
 }
 
 export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
@@ -16,43 +19,58 @@ export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
   campaign,
   caption,
   findings,
-  onConfirmApproval
+  reviewerName,
+  onConfirmApproval,
+  isDemoMode = false
 }) => {
+  const [visualReviewed, setVisualReviewed] = useState(false);
+  const [factsVerified, setFactsVerified] = useState(false);
+  useEffect(() => {
+    if (isOpen) {
+      setVisualReviewed(false);
+      setFactsVerified(false);
+    }
+  }, [isOpen]);
   if (!isOpen) return null;
 
-  const sha256 = '4f9ca821' + Math.random().toString(16).slice(2, 10) + '9318a42b' + Math.random().toString(16).slice(2, 10);
   const clearedCount = findings.filter(f => f.status === 'applied' || f.status === 'dismissed' || f.status === 'manual_reviewed').length;
+  const unresolvedFindings = findings.filter((finding) => finding.status === 'open');
+  const queuedCreative = findings.filter((f) => f.queuedCreativeCorrection && f.status !== 'applied' && f.status !== 'dismissed' && f.status !== 'manual_reviewed');
+  const openCritical = unresolvedFindings.filter((f) => f.severity === 'critical');
+  const canConfirm = visualReviewed && factsVerified && queuedCreative.length === 0 && unresolvedFindings.length === 0;
 
   const handleDownload = () => {
     const reportData = {
-      dossierId: `BRD-${Math.floor(1000 + Math.random() * 9000)}`,
       campaign: campaign.title,
       code: campaign.code,
       brand: campaign.brandName,
       channel: campaign.channel,
-      reviewedAt: new Date().toISOString(),
-      reviewer: 'Elena Rostova, JD (Senior Brand Counsel)',
-      cryptographicSeal: sha256,
+      exportedAt: new Date().toISOString(),
+      workflowStatus: 'awaiting_confirmation',
+      reviewer: reviewerName,
+      cryptographicSeal: null,
       clearedFindings: clearedCount,
       totalFindings: findings.length,
       finalCaption: caption,
+      demo: isDemoMode,
+      disclaimer: 'This is a review preview, not a legal certification or completed approval.',
       findingsDetail: findings.map(f => ({
         ruleId: f.ruleId,
         title: f.ruleTitle,
         severity: f.severity,
         status: f.status,
         matched: f.matchedText,
-        correction: f.suggestedCorrection
+        correction: f.suggestedCorrection,
+        reason: f.explanation,
+        ruleSource: f.ruleSource,
+        dismissNote: f.dismissNote
       }))
     };
 
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `compliance-audit-${campaign.code}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(
+      new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' }),
+      `compliance-audit-${campaign.code}.json`
+    );
   };
 
   return (
@@ -64,9 +82,11 @@ export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
               <span className="material-symbols-outlined text-[18px]">verified_user</span>
             </div>
             <div>
-              <h3 className="font-serif text-lg font-medium text-on-surface">Compliance Sign-off Authorization</h3>
+              <h3 className="font-serif text-lg font-medium text-on-surface">
+                {isDemoMode ? 'Demo Review Sign-off' : 'Compliance Sign-off Authorization'}
+              </h3>
               <span className="font-mono text-xs text-secondary font-semibold">
-                SHA-256: {sha256.slice(0, 16)}...
+                {isDemoMode ? 'Local demo · no server attestation' : 'Review preview · not yet approved'}
               </span>
             </div>
           </div>
@@ -84,10 +104,12 @@ export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
           <div className="p-3.5 rounded-xl bg-secondary-container/40 border border-secondary-fixed-dim/60 space-y-1">
             <div className="flex items-center gap-1.5 text-secondary font-semibold text-xs">
               <span className="material-symbols-outlined text-[16px]">check_circle</span>
-              All Critical Legal Flags Remediated
+              {isDemoMode ? 'Public Demo — Not a Legal Certification' : 'Review Preview — Approval Not Yet Filed'}
             </div>
             <p className="text-xs text-on-surface leading-relaxed">
-              Creative asset <span className="font-semibold text-primary">{campaign.title}</span> has passed compliance triage under the active rulebook of <span className="font-semibold">{campaign.brandName}</span>.
+              {isDemoMode
+                ? <>This local-only demo record does not represent a legal certification or server-verified approval. Creative asset <span className="font-semibold text-primary">{campaign.title}</span> is shown for workflow demonstration only.</>
+                : <>Review preview for <span className="font-semibold text-primary">{campaign.title}</span> against the configured rules for <span className="font-semibold">{campaign.brandName}</span>. This is not a legal certification.</>}
             </p>
           </div>
 
@@ -110,26 +132,44 @@ export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
           {/* Approved Final Caption */}
           <div>
             <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider block mb-1">
-              Final Certified Ad Copy
+              Final Caption Preview
             </span>
             <div className="p-3 rounded-lg bg-surface-container-low border border-surface-container-high text-xs text-on-surface font-mono leading-relaxed">
               {caption}
             </div>
           </div>
 
-          {/* Legal Counsel Attestation */}
-          <div className="p-3 rounded-lg bg-surface-container-low border border-surface-container-high flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="material-symbols-outlined text-secondary text-[24px]">draw</span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-on-surface">Elena Rostova, JD</span>
-                <span className="text-[11px] text-on-surface-variant">Senior Counsel • Digital Advertising Ethics</span>
-              </div>
+          {queuedCreative.length > 0 && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-950">
+              <strong>Creative replacement required:</strong> {queuedCreative.length} image finding(s) have queued copy changes. Upload the corrected artwork and re-run OCR/checks before filing approval.
             </div>
-            <span className="px-2 py-0.5 rounded bg-primary-fixed text-primary font-mono text-[10px] font-bold">
-              VERIFIED
-            </span>
+          )}
+
+          {unresolvedFindings.length > 0 && (
+            <div className="p-3 rounded-lg bg-error-container text-on-error-container text-xs">
+              <strong>Resolve or dismiss every finding before approval:</strong>{' '}
+              {unresolvedFindings.map((finding) => finding.ruleId).join(', ')}
+            </div>
+          )}
+
+          {openCritical.length > 0 && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-950">
+              <strong>Unresolved critical findings:</strong> {openCritical.length} critical issue(s) remain open. Resolve them, dismiss with a documented reason, mark manual review where appropriate, or use the workflow override path before approval can be filed.
+            </div>
+          )}
+
+          <div className="p-3 rounded-lg bg-surface-container-low border border-surface-container-high space-y-2 text-xs">
+            <span className="font-semibold text-on-surface block">Human confirmation (required)</span>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" checked={visualReviewed} onChange={(e) => setVisualReviewed(e.target.checked)} className="mt-0.5" />
+              <span>I manually reviewed visual layout, safe zones, contrast, logos, and anything OCR or rules cannot verify.</span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" checked={factsVerified} onChange={(e) => setFactsVerified(e.target.checked)} className="mt-0.5" />
+              <span>I verified claims/terms/facts against approved evidence where required; configured rule checks are not independent fact verification.</span>
+            </label>
           </div>
+
         </div>
 
         <div className="px-5 py-3.5 bg-surface-container-low border-t border-surface-container-high flex items-center justify-between gap-2 flex-wrap">
@@ -151,14 +191,16 @@ export const ApproveExportModal: React.FC<ApproveExportModalProps> = ({
             </button>
             <button
               type="button"
+              disabled={!canConfirm}
               onClick={() => {
+                if (!canConfirm) return;
                 onConfirmApproval();
                 onClose();
               }}
-              className="px-4 py-2 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all shadow-sm flex items-center gap-1.5"
+              className="px-4 py-2 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined text-[16px]">verified</span>
-              Authorize & File to Archive
+              {canConfirm ? 'Confirm Approval & File' : 'Complete Checklist to Confirm'}
             </button>
           </div>
         </div>

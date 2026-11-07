@@ -429,6 +429,7 @@ function connectionFailed(err) {
 }
 
 async function connectDB(forceRetry = false) {
+  if (isolatedTestMode) return null;
   if (isConnected && db) return db;
 
   const now = Date.now();
@@ -607,6 +608,26 @@ async function ensureCommonsReferences(database) {
 }
 
 async function getStatus() {
+  if (isolatedTestMode) {
+    return {
+      connected: false,
+      database: 'isolated-test',
+      provider: 'Memory Store',
+      collections: {
+        rulesets: memoryStore.rulesets.length,
+        brands: memoryStore.brands.length,
+        reviews: memoryStore.reviews.length,
+        drafts: memoryStore.drafts.length,
+        rules: memoryStore.rules.length,
+        campaigns: memoryStore.campaigns.length,
+        users: memoryStore.users.length,
+        sessions: memoryStore.sessions.length
+      },
+      activeRules: memoryStore.rules.length,
+      reviewsCount: memoryStore.reviews.length,
+      error: null
+    };
+  }
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     try {
@@ -1069,6 +1090,17 @@ function normalizeWorkspaceReview(record) {
 }
 
 async function getWorkspaceSnapshot() {
+  if (isolatedTestMode) {
+    return {
+      connected: false,
+      database: 'isolated-test',
+      updatedAt: new Date().toISOString(),
+      brands: memoryStore.brands.map(normalizeBrand),
+      rules: memoryStore.rules.map(normalizeWorkspaceRule).filter((r) => r.id && r.pattern),
+      campaigns: memoryStore.campaigns.map(normalizeWorkspaceCampaign),
+      reviews: memoryStore.reviews.map(normalizeWorkspaceReview)
+    };
+  }
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     const [brandRows, ruleRows, campaignRows, reviewRows] = await Promise.all([
@@ -1107,21 +1139,23 @@ async function saveWorkspaceRule(rule) {
   const { _id, createdAt, ...ruleFields } = rule;
   const value = { ...ruleFields, updatedAt: new Date() };
 
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    const storedBrandNames = {
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const storedBrandNames = {
       freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
       arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
       novatech: ['novatech', 'NovaTech Solutions'],
       global: ['global']
     }[rule.brand] || [rule.brand];
 
-    await currentDb.collection('rules').updateOne(
-      { id: String(rule.id), brand: { $in: storedBrandNames } },
-      { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
-      { upsert: true }
-    );
-    return currentDb.collection('rules').findOne({ id: String(rule.id), brand: rule.brand });
+      await currentDb.collection('rules').updateOne(
+        { id: String(rule.id), brand: { $in: storedBrandNames } },
+        { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
+        { upsert: true }
+      );
+      return currentDb.collection('rules').findOne({ id: String(rule.id), brand: rule.brand });
+    }
   }
 
   const idx = memoryStore.rules.findIndex((r) => r.id === rule.id);
@@ -1135,15 +1169,17 @@ async function saveWorkspaceRule(rule) {
 }
 
 async function deleteWorkspaceRule(id, brand) {
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    const storedBrandNames = {
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const storedBrandNames = {
       freshbites: ['freshbites', 'FreshBites Organic', 'FreshBites Organic (demo)'],
       arka: ['arka', 'Arka Foods', 'Arka Foods (demo)'],
       novatech: ['novatech', 'NovaTech Solutions'],
       global: ['global']
     }[brand] || [brand];
-    return currentDb.collection('rules').deleteOne({ id: String(id), brand: { $in: storedBrandNames } });
+      return currentDb.collection('rules').deleteOne({ id: String(id), brand: { $in: storedBrandNames } });
+    }
   }
 
   const initialCount = memoryStore.rules.length;
@@ -1213,6 +1249,13 @@ async function addWorkspaceReview(review) {
 
 // ── Legacy API operations (Preserved for compatibility) ───────────────────────
 async function getActiveRuleset(brandName) {
+  if (isolatedTestMode) {
+    if (brandName) {
+      const found = memoryStore.rulesets.find((r) => r.brand.toLowerCase().includes(brandName.toLowerCase()));
+      if (found) return found;
+    }
+    return memoryStore.rulesets[0] || defaultRuleset;
+  }
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     const query = brandName ? { brand: new RegExp(`^${brandName}`, 'i') } : { isDefault: true };
@@ -1229,16 +1272,18 @@ async function getActiveRuleset(brandName) {
 
 async function saveRuleset(ruleset) {
   ruleset.updatedAt = new Date();
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    if (ruleset._id) {
-      const id = typeof ruleset._id === 'string' ? new ObjectId(ruleset._id) : ruleset._id;
-      delete ruleset._id;
-      await currentDb.collection('rulesets').updateOne({ _id: id }, { $set: ruleset }, { upsert: true });
-    } else {
-      await currentDb.collection('rulesets').updateOne({ brand: ruleset.brand }, { $set: ruleset }, { upsert: true });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      if (ruleset._id) {
+        const id = typeof ruleset._id === 'string' ? new ObjectId(ruleset._id) : ruleset._id;
+        delete ruleset._id;
+        await currentDb.collection('rulesets').updateOne({ _id: id }, { $set: ruleset }, { upsert: true });
+      } else {
+        await currentDb.collection('rulesets').updateOne({ brand: ruleset.brand }, { $set: ruleset }, { upsert: true });
+      }
+      return ruleset;
     }
-    return ruleset;
   }
   const idx = memoryStore.rulesets.findIndex((r) => r.brand === ruleset.brand);
   if (idx >= 0) memoryStore.rulesets[idx] = ruleset;
@@ -1249,17 +1294,20 @@ async function saveRuleset(ruleset) {
 async function resetRuleset() {
   const resetCopy = JSON.parse(JSON.stringify(defaultRuleset));
   resetCopy.updatedAt = new Date();
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    await currentDb.collection('rulesets').deleteMany({ brand: resetCopy.brand });
-    await currentDb.collection('rulesets').insertOne(resetCopy);
-    return resetCopy;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('rulesets').deleteMany({ brand: resetCopy.brand });
+      await currentDb.collection('rulesets').insertOne(resetCopy);
+      return resetCopy;
+    }
   }
   memoryStore.rulesets = [resetCopy];
   return resetCopy;
 }
 
 async function getReviews(limit = 50) {
+  if (isolatedTestMode) return memoryStore.reviews.slice(0, limit);
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     return currentDb.collection('reviews').find({}).sort({ timestamp: -1 }).limit(limit).toArray();
@@ -1274,24 +1322,28 @@ async function addReview(reviewData) {
     formattedDate: new Date().toLocaleString("en-IN"),
     createdAt: new Date()
   };
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    const result = await currentDb.collection('reviews').insertOne(review);
-    review._id = result.insertedId;
-    return review;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const result = await currentDb.collection('reviews').insertOne(review);
+      review._id = result.insertedId;
+      return review;
+    }
   }
   memoryStore.reviews.unshift(review);
   return review;
 }
 
 async function deleteReview(id) {
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    try {
-      const objId = new ObjectId(id);
-      return await currentDb.collection('reviews').deleteOne({ _id: objId });
-    } catch (e) {
-      return await currentDb.collection('reviews').deleteOne({ reviewId: id });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      try {
+        const objId = new ObjectId(id);
+        return await currentDb.collection('reviews').deleteOne({ _id: objId });
+      } catch (e) {
+        return await currentDb.collection('reviews').deleteOne({ reviewId: id });
+      }
     }
   }
   memoryStore.reviews = memoryStore.reviews.filter((r) => r.reviewId !== id && String(r._id) !== id);
@@ -1299,6 +1351,7 @@ async function deleteReview(id) {
 }
 
 async function getLatestDraft() {
+  if (isolatedTestMode) return memoryStore.drafts[0] || null;
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     return currentDb.collection('drafts').findOne({}, { sort: { updatedAt: -1 } });
@@ -1308,18 +1361,21 @@ async function getLatestDraft() {
 
 async function saveDraft(draft) {
   draft.updatedAt = new Date();
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    await currentDb.collection('drafts').deleteMany({});
-    const res = await currentDb.collection('drafts').insertOne(draft);
-    draft._id = res.insertedId;
-    return draft;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('drafts').deleteMany({});
+      const res = await currentDb.collection('drafts').insertOne(draft);
+      draft._id = res.insertedId;
+      return draft;
+    }
   }
   memoryStore.drafts = [draft];
   return draft;
 }
 
 async function getBrands() {
+  if (isolatedTestMode) return memoryStore.brands.map(normalizeBrand);
   const currentDb = await connectDB();
   if (currentDb && isConnected) {
     return currentDb.collection('brands').find({}).toArray();

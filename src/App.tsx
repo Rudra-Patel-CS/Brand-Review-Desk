@@ -20,6 +20,7 @@ import { DismissNoteModal } from './components/modals/DismissNoteModal.js';
 import { DatabaseStatusModal } from './components/modals/DatabaseStatusModal.js';
 import { PlannedFeatureModal } from './components/modals/PlannedFeatureModal.js';
 import { UserManagementModal } from './components/modals/UserManagementModal.js';
+import { isPublicDemoMode } from './utils/publicDemo.js';
 
 import { BRANDS, INITIAL_PRESETS, INITIAL_REVIEWS, Brand } from './data/mockData.js';
 import {
@@ -43,11 +44,16 @@ interface WorkspaceSnapshot {
 
 export default function App() {
   // ── Session / authentication state (in-memory only, no localStorage tokens) ──
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [user, setUser] = useState<AuthUser | null>(
+    isPublicDemoMode
+      ? { id: 'public-demo', username: 'Public Demo', email: '', role: 'admin', createdAt: null }
+      : null
+  );
+  const [authChecking, setAuthChecking] = useState<boolean>(!isPublicDemoMode);
 
   // Check existing session via HttpOnly cookie on first load
   useEffect(() => {
+    if (isPublicDemoMode) return;
     let cancelled = false;
     apiFetch<{ user: AuthUser; csrfToken: string }>('/api/auth/me')
       .then((res) => {
@@ -103,11 +109,12 @@ export default function App() {
   const [reviews, setReviews] = useState<ReviewRecord[]>(INITIAL_REVIEWS);
 
   // System & connection state
-  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(isPublicDemoMode);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Modals state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [campaignToReplace, setCampaignToReplace] = useState<CampaignPreset | null>(null);
   const [isOcrOpen, setIsOcrOpen] = useState(false);
   const [ocrModalData, setOcrModalData] = useState<{
     campaignId: string;
@@ -147,7 +154,7 @@ export default function App() {
 
   // ── Workspace polling & sync with backend ────────────────────────────────────
   const refreshWorkspace = useCallback(async () => {
-    if (!user) return;
+    if (!user || isPublicDemoMode) return;
     try {
       const res = await apiFetch<WorkspaceSnapshot>('/api/workspace');
       if (res.ok && res.data) {
@@ -194,6 +201,11 @@ export default function App() {
 
     setRules((prev) => prev.map((r) => (r.id === ruleId ? updatedRule : r)));
 
+    if (isPublicDemoMode) {
+      showToast(`Rule ${ruleId} ${updatedRule.enabled ? 'enabled' : 'disabled'} in this demo`);
+      return;
+    }
+
     try {
       await apiFetch(`/api/workspace/rules/${encodeURIComponent(ruleId)}`, {
         method: 'PUT',
@@ -216,6 +228,11 @@ export default function App() {
 
     setRules((prev) => prev.filter((r) => r.id !== ruleId));
 
+    if (isPublicDemoMode) {
+      showToast(`Rule ${ruleId} deleted from this demo`);
+      return;
+    }
+
     try {
       await apiFetch(`/api/workspace/rules/${encodeURIComponent(ruleId)}?brand=${encodeURIComponent(targetRule.brand)}`, {
         method: 'DELETE'
@@ -234,6 +251,11 @@ export default function App() {
       }
       return [savedRule, ...prev];
     });
+
+    if (isPublicDemoMode) {
+      showToast(`Rule ${savedRule.id} saved in this demo`);
+      return;
+    }
 
     try {
       await apiFetch(`/api/workspace/rules/${encodeURIComponent(savedRule.id)}`, {
@@ -254,9 +276,25 @@ export default function App() {
 
   // Campaign upload and save
   const handleAddCampaign = async (newCampaign: CampaignPreset) => {
-    setCampaigns((prev) => [newCampaign, ...prev]);
-    setActiveCampaign(newCampaign);
+    const campaign = isPublicDemoMode
+      ? {
+          ...newCampaign,
+          isDemo: true,
+          workflowEvents: [{
+            id: `event-${Date.now()}`,
+            campaignId: newCampaign.id,
+            actionType: 'campaign_created',
+            toStatus: newCampaign.status,
+            user: { id: 'public-demo', username: 'Public Demo', role: 'admin' },
+            timestamp: new Date().toISOString()
+          }]
+        }
+      : newCampaign;
+    setCampaigns((prev) => [campaign, ...prev]);
+    setActiveCampaign(campaign);
     showToast(`Uploaded ${newCampaign.title} (${newCampaign.code})`);
+
+    if (isPublicDemoMode) return;
 
     try {
       await apiFetch('/api/workspace/campaigns', {
@@ -270,10 +308,20 @@ export default function App() {
   };
 
   const handleUpdateCampaign = async (updated: CampaignPreset) => {
+    const previousCampaign = campaigns.find((campaign) => campaign.id === updated.id);
+    if (
+      isPublicDemoMode &&
+      previousCampaign?.imageUrl.startsWith('blob:') &&
+      previousCampaign.imageUrl !== updated.imageUrl
+    ) {
+      URL.revokeObjectURL(previousCampaign.imageUrl);
+    }
     setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
     if (activeCampaign.id === updated.id) {
       setActiveCampaign(updated);
     }
+    if (isPublicDemoMode) return;
+
     try {
       await apiFetch(`/api/workspace/campaigns/${encodeURIComponent(updated.id)}`, {
         method: 'PUT',
@@ -320,6 +368,28 @@ export default function App() {
       return;
     }
 
+    const clearedCount = approveData.findings.filter(
+      (finding) =>
+        finding.status === 'applied' ||
+        finding.status === 'dismissed' ||
+        finding.status === 'manual_reviewed'
+    ).length;
+    const openCount = approveData.findings.length - clearedCount;
+
+    const auditHashInput = JSON.stringify({
+      campaignId: approveData.campaign.id,
+      caption: approveData.caption,
+      findings: approveData.findings,
+      reviewedAt: new Date().toISOString()
+    });
+    const auditHashBytes = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(auditHashInput)
+    );
+    const auditHash = Array.from(new Uint8Array(auditHashBytes), (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('');
+
     const newRecord: ReviewRecord = {
       id: `rev-${Date.now()}`,
       dossierNumber: `BRD-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -335,20 +405,43 @@ export default function App() {
           : user?.role === 'approver'
             ? 'Senior Compliance Approver'
             : 'Brand Reviewer',
-      auditId: `E8F-${Math.floor(10 + Math.random() * 90)}-CERT`,
-      sha256Hash: '4f9ca821' + Math.random().toString(16).slice(2, 12) + 'a72e8b',
-      status: 'approved',
+      auditId: `AUD-${Date.now()}`,
+      sha256Hash: auditHash,
+      isPublicDemo: isPublicDemoMode,
+      status: openCount === 0 ? 'approved' : 'conditional',
       findingsCount: approveData.findings.length,
-      clearedCount: approveData.findings.length,
-      openCount: 0,
+      clearedCount,
+      openCount,
       imageUrl: approveData.campaign.imageUrl,
       oldCopy: approveData.campaign.caption,
       newCopy: approveData.caption,
       findings: approveData.findings,
-      notes: `Approved and signed-off by ${user?.username} (${user?.role}). Cryptographic attestation generated.`
+      notes: isPublicDemoMode
+        ? `Public demo review by ${user?.username}; this record is local to the current browser session.`
+        : `Approved and signed-off by ${user?.username} (${user?.role}).`
     };
 
     setReviews((prev) => [newRecord, ...prev]);
+
+    if (isPublicDemoMode) {
+      const updatedCampaign = {
+        ...approveData.campaign,
+        caption: approveData.caption,
+        initialFindings: approveData.findings,
+        status: 'approved' as const,
+        approvedBy: user?.username || 'Public Demo',
+        approvedAt: new Date().toISOString()
+      };
+      setCampaigns((prev) => prev.map((campaign) =>
+        campaign.id === updatedCampaign.id ? updatedCampaign : campaign
+      ));
+      setActiveCampaign(updatedCampaign);
+      showToast(`Demo dossier #${newRecord.dossierNumber} filed in this session`);
+      setIsApproveOpen(false);
+      setApproveData(null);
+      setActiveTab('history');
+      return;
+    }
 
     try {
       const res = await apiFetch('/api/workspace/reviews', {
@@ -369,8 +462,39 @@ export default function App() {
     }
   };
 
-  const handleConfirmDismiss = (findingId: string, _note: string) => {
-    showToast(`Finding ${findingId} dismissed with counsel note`);
+  const handleConfirmDismiss = (findingId: string, dismissNote: string) => {
+    const targetCampaign = campaigns.find((campaign) => campaign.id === activeCampaign.id);
+    if (!targetCampaign) {
+      showToast('Could not update the current campaign finding.');
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const updatedCampaign = {
+      ...targetCampaign,
+      initialFindings: targetCampaign.initialFindings.map((finding) =>
+        finding.id === findingId
+          ? { ...finding, status: 'dismissed' as const, dismissNote }
+          : finding
+      ),
+      ...(isPublicDemoMode
+        ? {
+            workflowEvents: [
+              ...(targetCampaign.workflowEvents || []),
+              {
+                id: `event-${Date.now()}`,
+                campaignId: targetCampaign.id,
+                actionType: 'finding_dismissed',
+                user: { id: 'public-demo', username: 'Public Demo', role: 'admin' },
+                timestamp,
+                details: { findingId, dismissNote }
+              }
+            ]
+          }
+        : {})
+    };
+    void handleUpdateCampaign(updatedCampaign);
+    showToast(`Finding ${findingId} dismissed with your note`);
   };
 
   const handleToggleOffline = () => {
@@ -431,13 +555,21 @@ export default function App() {
         isOfflineMode={isOfflineMode}
         onToggleOffline={handleToggleOffline}
         onOpenDbStatus={() => setIsDbStatusOpen(true)}
-        onOpenUserManagement={() => setIsUserMgmtOpen(true)}
+        onOpenUserManagement={isPublicDemoMode ? undefined : () => setIsUserMgmtOpen(true)}
         user={user}
         onLogout={handleLogout}
+        isDemoMode={isPublicDemoMode}
       />
 
       {/* Main View Area */}
       <main className="flex-1 w-full pb-20 lg:pb-12">
+        {isPublicDemoMode && (
+          <div className="mx-auto mt-3 max-w-7xl px-4 sm:px-6">
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+              Public demo workspace. Changes remain in memory until you refresh or close this page; no account or database is used. Checks match the configured rules only—they do not independently verify facts or provide legal advice. Review OCR and visual layout manually.
+            </p>
+          </div>
+        )}
         {activeTab === 'review' && (
           <ReviewContent
             activeBrand={activeBrand}
@@ -450,7 +582,12 @@ export default function App() {
             }}
             rules={rules}
             currentUser={user}
+            isDemoMode={isPublicDemoMode}
             onOpenUpload={() => setIsUploadOpen(true)}
+            onReplaceCreative={() => {
+              setCampaignToReplace(activeCampaign);
+              setIsUploadOpen(true);
+            }}
             onOpenOcrText={(text, conf, camp) => {
               const campaign = camp || activeCampaign;
               setOcrModalData({
@@ -493,6 +630,19 @@ export default function App() {
               setIsNewRuleOpen(true);
             }}
             onResetRules={handleResetRules}
+            onImportRules={(imported) => {
+              setRules((prev) => {
+                const next = [...prev];
+                imported.forEach((rule) => {
+                  const normalized = rule as BrandRule;
+                  const idx = next.findIndex((r) => r.id === normalized.id);
+                  if (idx >= 0) next[idx] = normalized;
+                  else next.unshift(normalized);
+                });
+                return next;
+              });
+              showToast(`Imported ${imported.length} rule(s)`);
+            }}
           />
         )}
 
@@ -502,6 +652,9 @@ export default function App() {
           <InsightsAnalytics
             activeBrand={activeBrand}
             brands={brands}
+            campaigns={campaigns}
+            reviews={reviews}
+            isDemoMode={isPublicDemoMode}
             onOpenPlannedModal={(title) => {
               setPlannedTitle(title);
               setIsPlannedOpen(true);
@@ -532,6 +685,8 @@ export default function App() {
         activeBrand={activeBrand}
         rules={rules}
         onAddCampaign={handleAddCampaign}
+        replaceCampaign={campaignToReplace}
+        onReplaceCampaign={handleUpdateCampaign}
       />
 
       <NewRuleModal
@@ -556,7 +711,9 @@ export default function App() {
           campaign={approveData.campaign}
           caption={approveData.caption}
           findings={approveData.findings}
+          reviewerName={user.username}
           onConfirmApproval={handleConfirmApproval}
+          isDemoMode={isPublicDemoMode}
         />
       )}
 
@@ -580,7 +737,7 @@ export default function App() {
         featureTitle={plannedTitle}
       />
 
-      {user.role === 'admin' && (
+      {user.role === 'admin' && !isPublicDemoMode && (
         <UserManagementModal
           isOpen={isUserMgmtOpen}
           onClose={() => setIsUserMgmtOpen(false)}

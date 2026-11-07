@@ -1,15 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Brand } from '../data/mockData.js';
+import { CampaignPreset, ReviewRecord } from '../utils/rulesEngine.js';
+import { downloadBlob } from '../utils/download.js';
 
 interface InsightsAnalyticsProps {
   activeBrand: Brand;
   brands?: Brand[];
+  campaigns?: CampaignPreset[];
+  reviews?: ReviewRecord[];
   onOpenPlannedModal?: (title: string) => void;
+  isDemoMode?: boolean;
 }
 
 export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
   activeBrand,
-  brands = []
+  brands = [],
+  campaigns = [],
+  reviews = [],
+  isDemoMode = false
 }) => {
   const [selectedBrandId, setSelectedBrandId] = useState<string>('all');
   const [selectedAgency, setSelectedAgency] = useState<string>('all');
@@ -18,12 +26,65 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
   const [includeSample, setIncludeSample] = useState<boolean>(true);
 
   const [analytics, setAnalytics] = useState<any>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(!isDemoMode);
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<'idle' | 'downloading' | 'saved'>('idle');
 
+  const demoAnalytics = useMemo(() => {
+    if (!isDemoMode) return null;
+    const scoped = campaigns.filter(
+      (campaign) =>
+        (selectedBrandId === 'all' || campaign.brandId === selectedBrandId) &&
+        (includeSample || !campaign.isDemoSample)
+    );
+    const total = scoped.length;
+    const approved = scoped.filter((c) => c.status === 'approved').length;
+    const rejected = scoped.filter((c) => c.status === 'rejected').length;
+    const decided = approved + rejected;
+    const allFindings = scoped.flatMap((c) => c.initialFindings || []);
+    const openFindings = allFindings.filter((f) => f.status === 'open').length;
+    const critical = allFindings.filter((f) => f.severity === 'critical').length;
+    const resolved = allFindings.filter((f) => f.status !== 'open').length;
+    const byRule = new Map<string, { id: string; title: string; count: number }>();
+    allFindings.forEach((f) => {
+      const prev = byRule.get(f.ruleId) || { id: f.ruleId, title: f.ruleTitle, count: 0 };
+      prev.count += 1;
+      byRule.set(f.ruleId, prev);
+    });
+    const topInfractions = Array.from(byRule.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((r, i) => ({ ...r, rank: i + 1, share: allFindings.length ? Math.round((r.count / allFindings.length) * 100) : 0 }));
+    const sampleCampaignsCount = scoped.filter((campaign) => campaign.isDemoSample).length;
+    return {
+      totalCampaigns: total,
+      productionCampaignsCount: 0,
+      sampleCampaignsCount,
+      outcomes: {
+        approvalRate: decided ? Math.round((approved / decided) * 100) : 0,
+        approved,
+        rejected
+      },
+      findingsSummary: {
+        critical,
+        resolutionRate: allFindings.length ? Math.round((resolved / allFindings.length) * 100) : 100,
+        copyShare: 0,
+        ocrShare: 0
+      },
+      turnaround: { averageDisplay: 'Not measured', completedReviewsCount: reviews.filter((r) => r.isPublicDemo).length },
+      agencyScorecards: [],
+      crossBrandComparison: [],
+      topInfractions,
+      channelRiskIndex: [],
+      insufficientData: total === 0,
+      message: total === 0 ? 'No campaigns in this demo session yet.' : undefined,
+      openFindings
+    };
+  }, [isDemoMode, campaigns, selectedBrandId, includeSample, reviews]);
+
   // Fetch genuine analytics from database API
   const fetchAnalytics = async () => {
+    if (isDemoMode) return;
     try {
       setLoading(true);
       setError(null);
@@ -53,11 +114,33 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
   };
 
   useEffect(() => {
+    if (isDemoMode) {
+      setAnalytics(demoAnalytics);
+      setLoading(false);
+      return;
+    }
     fetchAnalytics();
-  }, [selectedBrandId, selectedAgency, selectedStatus, timeframe, includeSample]);
+  }, [selectedBrandId, selectedAgency, selectedStatus, timeframe, includeSample, isDemoMode, demoAnalytics]);
 
   // Export analytics as genuine CSV or JSON
   const handleExport = async (format: 'json' | 'csv') => {
+    if (isDemoMode) {
+      if (!demoAnalytics) {
+        setError('Public demo analytics are unavailable.');
+        return;
+      }
+      const payload = demoAnalytics;
+      const blob = new Blob(
+        [
+          format === 'json'
+            ? JSON.stringify(payload, null, 2)
+            : `metric,value\ncampaigns,${payload.totalCampaigns || 0}`
+        ],
+        { type: format === 'json' ? 'application/json' : 'text/csv' }
+      );
+      downloadBlob(blob, `demo-analytics.${format}`);
+      return;
+    }
     try {
       setExportState('downloading');
       const params = new URLSearchParams();
@@ -77,12 +160,7 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
       }
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `brand-compliance-analytics-${selectedBrandId}-${Date.now()}.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `brand-compliance-analytics-${selectedBrandId}-${Date.now()}.${format}`);
 
       setExportState('saved');
       setTimeout(() => setExportState('idle'), 2500);
@@ -107,7 +185,9 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
               Compliance Intelligence & Agency Scorecards
             </h1>
             <p className="text-xs text-on-surface-variant">
-              Database-backed audit metrics, agency performance scorecards, real turnaround speeds, and cross-brand comparisons.
+              {isDemoMode
+                ? 'Session-local metrics from campaigns and decisions in this browser tab. No database is used.'
+                : 'Database-backed audit metrics, agency performance scorecards, real turnaround speeds, and cross-brand comparisons.'}
             </p>
           </div>
 
@@ -116,7 +196,7 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
             <button
               type="button"
               onClick={() => handleExport('csv')}
-              disabled={exportState !== 'idle' || loading || analytics?.insufficientData}
+              disabled={exportState !== 'idle' || loading || (!isDemoMode && analytics?.insufficientData)}
               className="px-3 py-1.5 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface text-xs font-semibold flex items-center gap-1.5 border border-surface-container-high shadow-xs transition-all disabled:opacity-50"
               title="Download filtered campaign audit ledger in CSV"
             >
@@ -128,7 +208,7 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
             <button
               type="button"
               onClick={() => handleExport('json')}
-              disabled={exportState !== 'idle' || loading || analytics?.insufficientData}
+              disabled={exportState !== 'idle' || loading || (!isDemoMode && analytics?.insufficientData)}
               className="px-3.5 py-1.5 rounded-xl bg-primary text-on-primary text-xs font-semibold flex items-center gap-1.5 shadow-sm hover:bg-primary-container transition-all disabled:opacity-50"
               title="Download complete database analytics packet in JSON"
             >
@@ -264,14 +344,25 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
             />
             <span className="text-on-surface-variant font-mono text-[11px]">
               {includeSample ? (
-                <>
-                  Dataset includes <strong>{analytics?.sampleCampaignsCount ?? 0} sample / Wikimedia reference</strong> records and{' '}
-                  <strong>{analytics?.productionCampaignsCount ?? 0} production</strong> campaigns.
-                </>
+                isDemoMode ? (
+                  <>
+                    Demo session only: <strong>{analytics?.totalCampaigns ?? 0} campaigns</strong>, including{' '}
+                    <strong>{analytics?.sampleCampaignsCount ?? 0} illustrative presets</strong>. Not production reporting.
+                  </>
+                ) : (
+                  <>
+                    Dataset includes <strong>{analytics?.sampleCampaignsCount ?? 0} sample / Wikimedia reference</strong> records and{' '}
+                    <strong>{analytics?.productionCampaignsCount ?? 0} production</strong> campaigns.
+                  </>
+                )
               ) : (
-                <>
-                  Segregated Mode Active: Displaying strictly <strong>production data ({analytics?.productionCampaignsCount ?? 0} records)</strong>. Demo presets excluded.
-                </>
+                isDemoMode ? (
+                  <>Demo presets are not included in this session view.</>
+                ) : (
+                  <>
+                    Segregated Mode Active: Displaying strictly <strong>production data ({analytics?.productionCampaignsCount ?? 0} records)</strong>. Demo presets excluded.
+                  </>
+                )
               )}
             </span>
           </div>
@@ -376,7 +467,9 @@ export const InsightsAnalytics: React.FC<InsightsAnalyticsProps> = ({
                   {analytics?.totalCampaigns ?? 0}
                 </div>
                 <p className="text-xs text-outline mt-0.5 font-mono text-[11px]">
-                  {analytics?.productionCampaignsCount ?? 0} prod • {analytics?.sampleCampaignsCount ?? 0} sample
+                  {isDemoMode
+                    ? `${(analytics?.totalCampaigns ?? 0) - (analytics?.sampleCampaignsCount ?? 0)} session • ${analytics?.sampleCampaignsCount ?? 0} presets`
+                    : `${analytics?.productionCampaignsCount ?? 0} prod • ${analytics?.sampleCampaignsCount ?? 0} sample`}
                 </p>
               </div>
               <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-surface-container-high">

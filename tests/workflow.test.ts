@@ -22,6 +22,11 @@ let adminCsrf: string = '';
 let adminUser: any = null;
 
 test('Setup Workflow test server & authenticate accounts (Reviewer, Approver, Admin)', async () => {
+  db.setIsolatedTestMode(true);
+  db.memoryStore.users = [];
+  db.memoryStore.sessions = [];
+  db.memoryStore.campaigns = [];
+  db.memoryStore.events = [];
   const { app } = require('../server');
   testServer = http.createServer(app);
 
@@ -462,6 +467,7 @@ test('Feature 4 - Export review audit packet in JSON format', async () => {
 });
 
 test('Teardown Workflow test server', async () => {
+  db.setIsolatedTestMode(false);
   if (testServer) {
     if (typeof (testServer as any).closeAllConnections === 'function') {
       (testServer as any).closeAllConnections();
