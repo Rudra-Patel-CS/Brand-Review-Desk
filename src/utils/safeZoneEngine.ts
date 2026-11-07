@@ -286,3 +286,4 @@ export function detectSafeZoneOverlaps(
     totalObscuredCount: overlaps.length
   };
 }
+

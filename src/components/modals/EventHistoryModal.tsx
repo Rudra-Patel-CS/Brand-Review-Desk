@@ -276,3 +276,4 @@ export const EventHistoryModal: React.FC<EventHistoryModalProps> = ({
     </div>
   );
 };
+
