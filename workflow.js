@@ -122,7 +122,8 @@ async function logEvent(eventData, options = {}) {
   let targetDb = database;
   if (!targetDb && options.isConnected !== false) {
     const dbMod = getDbModule();
-    if (dbMod && dbMod.isDbConnected()) {
+    const isConn = dbMod && (typeof dbMod.isDbConnected === 'function' ? dbMod.isDbConnected() : (typeof dbMod.getStatus === 'function' && dbMod.getStatus().connected));
+    if (isConn) {
       try {
         targetDb = await dbMod.connectDB();
       } catch {}
@@ -185,7 +186,8 @@ async function getCampaignEvents(campaignId, options = {}) {
   let targetDb = database;
   if (!targetDb && options.isConnected !== false) {
     const dbMod = getDbModule();
-    if (dbMod && dbMod.isDbConnected()) {
+    const isConn = dbMod && (typeof dbMod.isDbConnected === 'function' ? dbMod.isDbConnected() : (typeof dbMod.getStatus === 'function' && dbMod.getStatus().connected));
+    if (isConn) {
       try {
         targetDb = await dbMod.connectDB();
       } catch {}

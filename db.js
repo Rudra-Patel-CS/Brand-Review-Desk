@@ -661,41 +661,43 @@ async function createUser({ username, email, passwordHash, role = 'reviewer', di
   const usernameLower = cleanUsername.toLowerCase();
   const emailLower = cleanEmail.toLowerCase();
 
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    const existing = await currentDb.collection('users').findOne({
-      $or: [
-        { usernameLower },
-        { emailLower },
-        { username: cleanUsername },
-        { email: cleanEmail }
-      ]
-    });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const existing = await currentDb.collection('users').findOne({
+        $or: [
+          { usernameLower },
+          { emailLower },
+          { username: cleanUsername },
+          { email: cleanEmail }
+        ]
+      });
 
-    if (existing) {
-      const err = new Error(
-        existing.usernameLower === usernameLower
-          ? 'That username is already taken.'
-          : 'An account with that email already exists.'
-      );
-      err.code = 'USER_EXISTS';
-      throw err;
+      if (existing) {
+        const err = new Error(
+          existing.usernameLower === usernameLower
+            ? 'That username is already taken.'
+            : 'An account with that email already exists.'
+        );
+        err.code = 'USER_EXISTS';
+        throw err;
+      }
+
+      const doc = {
+        username: cleanUsername,
+        usernameLower,
+        email: cleanEmail,
+        emailLower,
+        passwordHash,
+        role: role || 'reviewer',
+        disabled: Boolean(disabled),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const result = await currentDb.collection('users').insertOne(doc);
+      return { ...doc, _id: result.insertedId };
     }
-
-    const doc = {
-      username: cleanUsername,
-      usernameLower,
-      email: cleanEmail,
-      emailLower,
-      passwordHash,
-      role: role || 'reviewer',
-      disabled: Boolean(disabled),
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    const result = await currentDb.collection('users').insertOne(doc);
-    return { ...doc, _id: result.insertedId };
   }
 
   // Memory fallback
@@ -729,8 +731,11 @@ async function createUser({ username, email, passwordHash, role = 'reviewer', di
 }
 
 async function countUsers() {
+  if (isolatedTestMode) {
+    return memoryStore.users.length;
+  }
   const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
+  if (currentDb && isConnected) {
     return currentDb.collection('users').countDocuments();
   }
   return memoryStore.users.length;
@@ -741,15 +746,17 @@ async function findUser(identifier) {
   if (!raw) return null;
   const key = raw.toLowerCase();
 
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    const user = await currentDb.collection('users').findOne({
-      $or: [{ usernameLower: key }, { emailLower: key }]
-    });
-    if (user) return user;
-    return currentDb.collection('users').findOne({
-      $or: [{ username: raw }, { email: raw }]
-    });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const user = await currentDb.collection('users').findOne({
+        $or: [{ usernameLower: key }, { emailLower: key }]
+      });
+      if (user) return user;
+      return currentDb.collection('users').findOne({
+        $or: [{ username: raw }, { email: raw }]
+      });
+    }
   }
 
   return memoryStore.users.find(
@@ -759,13 +766,15 @@ async function findUser(identifier) {
 
 async function findUserById(id) {
   if (!id) return null;
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    try {
-      const objId = typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id;
-      return await currentDb.collection('users').findOne({ _id: objId });
-    } catch {
-      return await currentDb.collection('users').findOne({ _id: id });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      try {
+        const objId = typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id;
+        return await currentDb.collection('users').findOne({ _id: objId });
+      } catch {
+        return await currentDb.collection('users').findOne({ _id: id });
+      }
     }
   }
 
@@ -773,12 +782,14 @@ async function findUserById(id) {
 }
 
 async function listUsers() {
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    return currentDb.collection('users')
-      .find({}, { projection: { passwordHash: 0 } })
-      .sort({ createdAt: -1 })
-      .toArray();
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      return currentDb.collection('users')
+        .find({}, { projection: { passwordHash: 0 } })
+        .sort({ createdAt: -1 })
+        .toArray();
+    }
   }
 
   return memoryStore.users.map(({ passwordHash, ...rest }) => rest);
@@ -798,16 +809,18 @@ async function updateUser(id, updates) {
     updatePayload.emailLower = String(updates.email).toLowerCase().trim();
   }
 
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    let filter;
-    try {
-      filter = { _id: typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id };
-    } catch {
-      filter = { _id: id };
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      let filter;
+      try {
+        filter = { _id: typeof id === 'string' && id.length === 24 ? new ObjectId(id) : id };
+      } catch {
+        filter = { _id: id };
+      }
+      await currentDb.collection('users').updateOne(filter, { $set: updatePayload });
+      return findUserById(id);
     }
-    await currentDb.collection('users').updateOne(filter, { $set: updatePayload });
-    return findUserById(id);
   }
 
   const idx = memoryStore.users.findIndex((u) => String(u._id) === String(id) || String(u.id) === String(id));
@@ -833,10 +846,12 @@ async function createSession({ sessionId, userId, username, role, csrfToken, exp
     userAgent: userAgent || 'unknown'
   };
 
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    await currentDb.collection('sessions').insertOne(sessionDoc);
-    return sessionDoc;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('sessions').insertOne(sessionDoc);
+      return sessionDoc;
+    }
   }
 
   memoryStore.sessions.push(sessionDoc);
@@ -847,15 +862,17 @@ async function findSession(sessionId) {
   if (!sessionId) return null;
   const now = new Date();
 
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    const session = await currentDb.collection('sessions').findOne({ sessionId });
-    if (!session) return null;
-    if (session.expiresAt && session.expiresAt <= now) {
-      await currentDb.collection('sessions').deleteOne({ sessionId });
-      return null;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const session = await currentDb.collection('sessions').findOne({ sessionId });
+      if (!session) return null;
+      if (session.expiresAt && session.expiresAt <= now) {
+        await currentDb.collection('sessions').deleteOne({ sessionId });
+        return null;
+      }
+      return session;
     }
-    return session;
   }
 
   const found = memoryStore.sessions.find((s) => s.sessionId === sessionId);
@@ -869,10 +886,12 @@ async function findSession(sessionId) {
 
 async function deleteSession(sessionId) {
   if (!sessionId) return;
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    await currentDb.collection('sessions').deleteOne({ sessionId });
-    return;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('sessions').deleteOne({ sessionId });
+      return;
+    }
   }
 
   memoryStore.sessions = memoryStore.sessions.filter((s) => s.sessionId !== sessionId);
@@ -880,10 +899,12 @@ async function deleteSession(sessionId) {
 
 async function deleteUserSessions(userId) {
   if (!userId) return;
-  const currentDb = await connectDB();
-  if (!isolatedTestMode && currentDb && isConnected) {
-    await currentDb.collection('sessions').deleteMany({ userId: String(userId) });
-    return;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('sessions').deleteMany({ userId: String(userId) });
+      return;
+    }
   }
 
   memoryStore.sessions = memoryStore.sessions.filter((s) => String(s.userId) !== String(userId));
@@ -1134,14 +1155,16 @@ async function saveWorkspaceCampaign(campaign) {
   const { _id, createdAt, ...campaignFields } = campaign;
   const value = { ...campaignFields, updatedAt: new Date() };
 
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    await currentDb.collection('campaigns').updateOne(
-      { id: String(campaign.id) },
-      { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
-      { upsert: true }
-    );
-    return currentDb.collection('campaigns').findOne({ id: String(campaign.id) });
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('campaigns').updateOne(
+        { id: String(campaign.id) },
+        { $set: value, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
+        { upsert: true }
+      );
+      return currentDb.collection('campaigns').findOne({ id: String(campaign.id) });
+    }
   }
 
   const idx = memoryStore.campaigns.findIndex((c) => c.id === campaign.id);
@@ -1157,10 +1180,12 @@ async function saveWorkspaceCampaign(campaign) {
 async function findWorkspaceCampaignById(id) {
   if (!id) return null;
   const targetId = String(id);
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    const doc = await currentDb.collection('campaigns').findOne({ id: targetId });
-    return doc ? normalizeWorkspaceCampaign(doc) : null;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const doc = await currentDb.collection('campaigns').findOne({ id: targetId });
+      return doc ? normalizeWorkspaceCampaign(doc) : null;
+    }
   }
   const memDoc = memoryStore.campaigns.find((c) => String(c.id) === targetId);
   return memDoc ? normalizeWorkspaceCampaign(memDoc) : null;
@@ -1174,10 +1199,12 @@ async function addWorkspaceReview(review) {
     createdAt: new Date()
   };
 
-  const currentDb = await connectDB();
-  if (currentDb && isConnected) {
-    await currentDb.collection('reviews').insertOne(value);
-    return value;
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('reviews').insertOne(value);
+      return value;
+    }
   }
 
   memoryStore.reviews.unshift(value);
@@ -1349,6 +1376,7 @@ async function getInsights() {
 module.exports = {
   connectDB,
   getStatus,
+  isDbConnected: () => isConnected,
   getActiveRuleset,
   saveRuleset,
   resetRuleset,
