@@ -85,7 +85,8 @@ function makeRequest(
       url,
       {
         method: options.method || 'GET',
-        headers: reqHeaders
+        headers: reqHeaders,
+        agent: false
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -333,5 +334,10 @@ test('Feature 2 - Commons references and external URLs remain preserved', async 
 });
 
 test('Teardown storage test server', async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (server) {
+    if (typeof (server as any).closeAllConnections === 'function') {
+      (server as any).closeAllConnections();
+    }
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

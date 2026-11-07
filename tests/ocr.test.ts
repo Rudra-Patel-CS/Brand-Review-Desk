@@ -277,6 +277,9 @@ test('Feature 3 - Rule evaluation against extracted and corrected artwork text',
 test('Teardown OCR test server', async () => {
   await ocrEngine.terminateWorker();
   if (testServer) {
+    if (typeof (testServer as any).closeAllConnections === 'function') {
+      (testServer as any).closeAllConnections();
+    }
     await new Promise<void>((resolve) => testServer!.close(() => resolve()));
   }
 });

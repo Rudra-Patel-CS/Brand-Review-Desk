@@ -463,6 +463,9 @@ test('Feature 4 - Export review audit packet in JSON format', async () => {
 
 test('Teardown Workflow test server', async () => {
   if (testServer) {
+    if (typeof (testServer as any).closeAllConnections === 'function') {
+      (testServer as any).closeAllConnections();
+    }
     await new Promise<void>((resolve) => testServer!.close(() => resolve()));
   }
 });

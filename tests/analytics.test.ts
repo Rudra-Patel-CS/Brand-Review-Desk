@@ -446,6 +446,10 @@ test('Feature 6: Authenticated REST API endpoints for analytics and exports', as
 test('Teardown Analytics test server', async () => {
   db.setIsolatedTestMode(false);
   if (testServer) {
+    if (typeof (testServer as any).closeAllConnections === 'function') {
+      (testServer as any).closeAllConnections();
+    }
     await new Promise<void>((resolve) => testServer!.close(() => resolve()));
   }
 });
+

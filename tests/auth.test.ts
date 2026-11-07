@@ -40,7 +40,8 @@ function makeRequest(
       url,
       {
         method: options.method || 'GET',
-        headers: reqHeaders
+        headers: reqHeaders,
+        agent: false
       },
       (res) => {
         let rawData = '';
@@ -368,5 +369,10 @@ test('Feature 1 - Rate limiting on excessive failed authentication attempts', as
 
 test('Teardown test server', async () => {
   db.setIsolatedTestMode(false);
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (server) {
+    if (typeof (server as any).closeAllConnections === 'function') {
+      (server as any).closeAllConnections();
+    }
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

@@ -193,3 +193,4 @@ test('Feature 5: Unsupported format handling without breaking', () => {
   assert.ok(safeZoneEngine.SAFE_ZONE_DISCLAIMER.includes('layout guidance'));
   assert.ok(safeZoneEngine.SAFE_ZONE_DISCLAIMER.includes('does not guarantee final platform rendering'));
 });
+
