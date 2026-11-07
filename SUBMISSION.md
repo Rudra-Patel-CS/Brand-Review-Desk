@@ -5,7 +5,7 @@
 - **Source repository:** [Rudra-Patel-CS/Brand-Review-Desk](https://github.com/Rudra-Patel-CS/Brand-Review-Desk)
 - **Intended public demo:** [https://rudra-patel-cs.github.io/Brand-Review-Desk/](https://rudra-patel-cs.github.io/Brand-Review-Desk/)
 - **Access:** The GitHub Pages build is designed to open directly into a browser-only demo workspace without registration or sign-in.
-- **Deployment status:** The deployment workflow is included, but a live deployment is not confirmed until GitHub Pages is enabled for the repository and a Pages workflow run succeeds. Do not treat the intended URL as live before that check.
+- **Deployment status:** The workflow attempts to enable GitHub Pages automatically. A live deployment is not confirmed until a Pages workflow run succeeds. If the workflow lacks permission to enable Pages, a repository administrator must enable it in repository settings.
 
 ## What the product does
 
@@ -33,8 +33,8 @@ Brand Review Desk is an existing creative-review application. A reviewer can wor
 
 ## How to deploy the no-login demo
 
-1. Open the source repository's **Settings → Pages** and select **GitHub Actions** as the source.
-2. Push to `main`, or run **Actions → Deploy public demo → Run workflow**.
+1. Push to `main`, or run **Actions → Deploy public demo → Run workflow**. The workflow attempts to enable Pages automatically.
+2. If the run reports insufficient permission, open the source repository's **Settings → Pages** and select **GitHub Actions** as the source.
 3. Confirm the workflow completes successfully and GitHub reports the deployed Pages URL.
 4. Open the URL in a new private/incognito browser window with no existing application session. The expected initial state is the sample review workspace, not a login or registration form.
 5. Exercise a caption finding, OCR of an uploaded image, a decision, approval, and export.
@@ -43,7 +43,7 @@ The Pages workflow does not need application credentials. For a separate server-
 
 ## Honest scope and unfinished work
 
-- **Live deployment:** Not confirmed until Pages is enabled and a successful deployment is visible in Actions. The intended URL above must not be presented as a verified live link before then.
+- **Live deployment:** Not confirmed until a successful deployment is visible in Actions. The intended URL above must not be presented as a verified live link before then.
 - **Public demo persistence:** Uploads, OCR corrections, rule edits, findings, decisions, approvals, and exports are in-memory demo behavior and are lost on reload. The static demo has no backend or shared user accounts.
 - **Factual review:** Rule matching only checks configured patterns and stored guidance. It does not independently verify claims, substantiation documents, terms, or current facts. A human must verify those against approved evidence.
 - **Visual review:** OCR-box/safe-zone checks are limited to available OCR output and configured platform geometry. Contrast, logo placement, image context, and platform-specific rendering still require a human.

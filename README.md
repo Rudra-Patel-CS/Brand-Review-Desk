@@ -18,7 +18,7 @@ Intended public URL (available after Pages is enabled and the workflow succeeds)
 
 `https://rudra-patel-cs.github.io/Brand-Review-Desk/`
 
-The deployment workflow is configured in this repository, but the live URL is not confirmed until the repository owner enables Pages and a deployment succeeds. One-time repository setup: in **Settings → Pages**, set the source to **GitHub Actions**, then run or push to the `main` branch. The workflow token cannot enable Pages for a repository where Pages has never been configured.
+The deployment workflow attempts to enable GitHub Pages and configure the deployment automatically. The live URL is not confirmed until a deployment succeeds. If the workflow reports that Pages cannot be enabled, a repository administrator must open **Settings → Pages**, select **GitHub Actions** as the source, then rerun the workflow.
 
 For a local preview of the same no-login build:
 
@@ -39,8 +39,8 @@ The normal server-backed build retains its authenticated login and MongoDB workf
 
 ### GitHub Pages deployment
 
-1. In the repository settings, open **Pages** and select **GitHub Actions** as the source.
-2. Push to `main` or run **Actions → Deploy public demo → Run workflow**.
+1. Push to `main` or run **Actions → Deploy public demo → Run workflow**. The workflow attempts to enable Pages automatically.
+2. If the run reports insufficient permissions to enable Pages, a repository administrator must open **Settings → Pages** and select **GitHub Actions** as the source.
 3. Wait for the workflow to complete successfully, then open the URL above in a private/incognito window. Confirm the workspace opens without a sign-in screen and exercise review, OCR, decisions, approval, and export.
 4. If Pages is unavailable or the workflow has not completed, use the Actions run as the deployment status source; do not treat the intended URL as a verified live link.
 
