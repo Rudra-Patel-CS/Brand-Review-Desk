@@ -449,6 +449,7 @@ export default function App() {
               if (brand) setActiveBrand(brand);
             }}
             rules={rules}
+            currentUser={user}
             onOpenUpload={() => setIsUploadOpen(true)}
             onOpenOcrText={(text, conf, camp) => {
               const campaign = camp || activeCampaign;

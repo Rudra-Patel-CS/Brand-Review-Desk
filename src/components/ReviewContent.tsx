@@ -9,7 +9,9 @@ import {
   runComplianceAudit
 } from '../utils/rulesEngine.js';
 
-import { getCsrfToken } from '../utils/auth.js';
+import { getCsrfToken, AuthUser } from '../utils/auth.js';
+import { WorkflowActionModal, WorkflowModalAction } from './modals/WorkflowActionModal.js';
+import { EventHistoryModal } from './modals/EventHistoryModal.js';
 
 interface ReviewContentProps {
   activeBrand: Brand;
@@ -17,6 +19,7 @@ interface ReviewContentProps {
   activeCampaign: CampaignPreset;
   onSelectCampaign: (campaign: CampaignPreset) => void;
   rules: BrandRule[];
+  currentUser?: AuthUser;
   onOpenUpload: () => void;
   onOpenOcrText: (ocrText: string, confidence: number, campaign?: CampaignPreset) => void;
   onUpdateCampaign?: (campaign: CampaignPreset) => void;
@@ -31,6 +34,7 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   activeCampaign,
   onSelectCampaign,
   rules,
+  currentUser,
   onOpenUpload,
   onOpenOcrText,
   onUpdateCampaign,
@@ -49,6 +53,12 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   const [ocrError, setOcrError] = useState<string | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState('Autosaved just now');
   const [zoomLevel, setZoomLevel] = useState<1 | 1.25 | 1.5>(1);
+
+  // Workflow Action & Audit History modal states
+  const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
+  const [workflowAction, setWorkflowAction] = useState<WorkflowModalAction>('submit');
+  const [isEventHistoryOpen, setIsEventHistoryOpen] = useState(false);
+  const [workflowToast, setWorkflowToast] = useState<string | null>(null);
 
   const findingRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
@@ -238,6 +248,120 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     }
   };
 
+  const getWorkflowBadge = (status?: string) => {
+    const s = String(status || 'draft').toLowerCase();
+    switch (s) {
+      case 'in_review':
+        return {
+          label: 'In Review',
+          className: 'bg-blue-100 text-blue-900 border-blue-300',
+          dot: 'bg-blue-600 animate-pulse'
+        };
+      case 'changes_requested':
+        return {
+          label: 'Changes Requested',
+          className: 'bg-amber-100 text-amber-900 border-amber-300',
+          dot: 'bg-amber-600'
+        };
+      case 'approved':
+        return {
+          label: 'Approved',
+          className: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+          dot: 'bg-emerald-600'
+        };
+      case 'rejected':
+        return {
+          label: 'Rejected',
+          className: 'bg-rose-100 text-rose-900 border-rose-300',
+          dot: 'bg-rose-600'
+        };
+      case 'draft':
+      default:
+        return {
+          label: 'Draft',
+          className: 'bg-surface-container-high text-on-surface border-surface-container-highest',
+          dot: 'bg-outline'
+        };
+    }
+  };
+
+  const handleOpenWorkflowAction = (action: WorkflowModalAction) => {
+    setWorkflowAction(action);
+    setIsWorkflowModalOpen(true);
+  };
+
+  const handleWorkflowTransition = async (data: {
+    targetStatus: string;
+    notes?: string;
+    requestedChanges?: string;
+    criticalOverrideReason?: string;
+    allowSelfApproval?: boolean;
+  }) => {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const res = await fetch(`/api/workspace/campaigns/${encodeURIComponent(activeCampaign.id)}/transition`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({
+        ...data,
+        idempotencyKey: `trans-${activeCampaign.id}-${data.targetStatus}-${Date.now()}`
+      })
+    });
+
+    const resData = await res.json();
+    if (!res.ok) {
+      throw new Error(resData?.error || `Workflow transition failed: ${res.status}`);
+    }
+
+    if (onUpdateCampaign && resData.campaign) {
+      onUpdateCampaign(resData.campaign);
+    }
+    setWorkflowToast(`Campaign status updated to "${resData.toStatus.replace(/_/g, ' ')}"`);
+    setTimeout(() => setWorkflowToast(null), 3500);
+  };
+
+  const handleAddComment = async (commentText: string) => {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const res = await fetch(`/api/workspace/campaigns/${encodeURIComponent(activeCampaign.id)}/comments`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ comment: commentText })
+    });
+
+    const resData = await res.json();
+    if (!res.ok) {
+      throw new Error(resData?.error || 'Failed to post comment.');
+    }
+
+    if (onUpdateCampaign && resData.campaign) {
+      onUpdateCampaign(resData.campaign);
+    }
+    setWorkflowToast('Reviewer comment added to audit record');
+    setTimeout(() => setWorkflowToast(null), 3000);
+  };
+
+  const handleExportAudit = () => {
+    window.open(`/api/workspace/campaigns/${encodeURIComponent(activeCampaign.id)}/export`, '_blank');
+  };
+
+  const currentStatus = String(activeCampaign.status || 'draft').toLowerCase();
+  const wfBadge = getWorkflowBadge(currentStatus);
+
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* 1. Header Context Badge & Campaign Meta */}
@@ -270,11 +394,166 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                 ? `Advisory Clearance (${compliance.warningOpen} Warning, ${compliance.totalResolved} Cleared)`
                 : `All Rules Passed (${compliance.totalResolved} Cleared)`}
             </span>
+
+            {/* Workflow Status Badge */}
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${wfBadge.className}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${wfBadge.dot}`} />
+              <span>Status: {wfBadge.label}</span>
+            </span>
           </div>
 
           <h1 className="font-serif text-2xl sm:text-3xl text-primary font-medium tracking-tight break-words">
             {activeCampaign.title}
           </h1>
+        </div>
+
+        {/* Workflow Notification Banners */}
+        {workflowToast && (
+          <div className="p-2.5 rounded-xl bg-primary text-on-primary text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+            <span className="material-symbols-outlined text-[18px]">info</span>
+            <span>{workflowToast}</span>
+          </div>
+        )}
+
+        {activeCampaign.requestedChanges && currentStatus === 'changes_requested' && (
+          <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-950 flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-amber-700 text-[18px] shrink-0 mt-0.5">assignment_return</span>
+            <div className="space-y-0.5">
+              <span className="font-bold text-amber-900 block">Editorial Revisions Requested ({activeCampaign.changesRequestedBy || 'Reviewer'}):</span>
+              <p className="text-[11px] leading-relaxed text-amber-900/90">{activeCampaign.requestedChanges}</p>
+            </div>
+          </div>
+        )}
+
+        {activeCampaign.rejectionReason && currentStatus === 'rejected' && (
+          <div className="bg-rose-500/10 border border-rose-500/40 rounded-xl p-3 text-xs text-rose-950 flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-rose-700 text-[18px] shrink-0 mt-0.5">cancel</span>
+            <div className="space-y-0.5">
+              <span className="font-bold text-rose-900 block">Campaign Rejected ({activeCampaign.rejectedBy || 'Approver'}):</span>
+              <p className="text-[11px] leading-relaxed text-rose-900/90">{activeCampaign.rejectionReason}</p>
+            </div>
+          </div>
+        )}
+
+        {activeCampaign.criticalOverrideReason && (
+          <div className="bg-purple-500/10 border border-purple-500/40 rounded-xl p-3 text-xs text-purple-950 flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-purple-700 text-[18px] shrink-0 mt-0.5">gavel</span>
+            <div className="space-y-0.5">
+              <span className="font-bold text-purple-900 block">Documented Critical Override ({activeCampaign.overrideApprovedBy || activeCampaign.approvedBy || 'Approver'}):</span>
+              <p className="font-mono text-[11px] text-purple-900/90">{activeCampaign.criticalOverrideReason}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Workflow Actions & Sign-Offs Bar */}
+        <div className="flex items-center justify-between gap-3 pt-3 border-t border-surface-container-high flex-wrap">
+          {/* Sign-offs info */}
+          <div className="flex items-center gap-2 text-xs flex-wrap">
+            {activeCampaign.reviewedBy ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-container text-on-surface font-mono text-[11px]">
+                <span className="material-symbols-outlined text-[15px] text-primary">person_check</span>
+                <span>Reviewed by: <strong>{activeCampaign.reviewedBy}</strong></span>
+              </span>
+            ) : (
+              <span className="text-on-surface-variant text-[11px] font-mono">
+                Reviewer: Unassigned
+              </span>
+            )}
+
+            {activeCampaign.approvedBy && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 font-mono text-[11px]">
+                <span className="material-symbols-outlined text-[15px] text-emerald-700">verified</span>
+                <span>Approved by: <strong>{activeCampaign.approvedBy}</strong></span>
+              </span>
+            )}
+
+            {activeCampaign.rejectedBy && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 font-mono text-[11px]">
+                <span className="material-symbols-outlined text-[15px] text-rose-700">cancel</span>
+                <span>Rejected by: <strong>{activeCampaign.rejectedBy}</strong></span>
+              </span>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {(currentStatus === 'draft' || currentStatus === 'changes_requested') && (
+              <button
+                type="button"
+                onClick={() => handleOpenWorkflowAction('submit')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-on-primary hover:bg-primary-container text-xs font-semibold shadow-xs transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">send</span>
+                <span>Submit for Review</span>
+              </button>
+            )}
+
+            {currentStatus === 'in_review' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleOpenWorkflowAction('request_changes')}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">assignment_return</span>
+                  <span>Request Changes</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenWorkflowAction('approve')}
+                  disabled={currentUser && currentUser.role === 'reviewer'}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold shadow-xs transition-colors disabled:opacity-40"
+                  title={currentUser?.role === 'reviewer' ? 'Approval requires Approver or Admin role' : 'Sign off & approve campaign'}
+                >
+                  <span className="material-symbols-outlined text-[16px]">verified</span>
+                  <span>Approve Campaign</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenWorkflowAction('reject')}
+                  disabled={currentUser && currentUser.role === 'reviewer'}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold shadow-xs transition-colors disabled:opacity-40"
+                  title={currentUser?.role === 'reviewer' ? 'Rejection requires Approver or Admin role' : 'Reject campaign'}
+                >
+                  <span className="material-symbols-outlined text-[16px]">cancel</span>
+                  <span>Reject</span>
+                </button>
+              </>
+            )}
+
+            {currentStatus === 'approved' && currentUser?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => handleOpenWorkflowAction('submit')}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface text-xs font-semibold transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">replay</span>
+                <span>Re-open Review</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsEventHistoryOpen(true)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface text-xs font-semibold border border-surface-container-high transition-colors shadow-xs"
+              title="View chronological event history and audit log"
+            >
+              <span className="material-symbols-outlined text-[16px]">history</span>
+              <span>Audit History</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportAudit}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface text-xs font-semibold border border-surface-container-high transition-colors shadow-xs"
+              title="Export saved review audit record in JSON"
+            >
+              <span className="material-symbols-outlined text-[16px]">download</span>
+              <span>Export Record</span>
+            </button>
+          </div>
         </div>
 
         {/* Quick Campaign Switcher / Presets Strip */}
@@ -899,21 +1178,41 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={compliance.criticalOpen > 0}
-                onClick={() => onOpenApproveModal(activeCampaign, currentCaption, findings)}
-                className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${
-                  compliance.criticalOpen > 0
-                    ? 'bg-surface-container text-on-surface-variant/60 cursor-not-allowed border border-surface-container-high'
-                    : 'bg-primary text-on-primary hover:bg-primary-container cursor-pointer'
-                }`}
+                onClick={() => handleOpenWorkflowAction('approve')}
+                className="flex-1 py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">verified_user</span>
-                <span>Approve & Export Review Pack</span>
+                <span>
+                  {compliance.criticalOpen > 0
+                    ? `Sign-Off & Document Override (${compliance.criticalOpen} Critical)`
+                    : 'Sign-Off & Approve Campaign'}
+                </span>
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Workflow Action Transition Modal */}
+      {currentUser && (
+        <WorkflowActionModal
+          isOpen={isWorkflowModalOpen}
+          onClose={() => setIsWorkflowModalOpen(false)}
+          action={workflowAction}
+          campaign={activeCampaign}
+          currentUser={currentUser}
+          findings={findings}
+          onConfirm={handleWorkflowTransition}
+        />
+      )}
+
+      {/* Chronological Event History & Audit Modal */}
+      <EventHistoryModal
+        isOpen={isEventHistoryOpen}
+        onClose={() => setIsEventHistoryOpen(false)}
+        campaign={activeCampaign}
+        onAddComment={handleAddComment}
+      />
     </div>
   );
 };

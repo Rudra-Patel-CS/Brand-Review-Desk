@@ -36,6 +36,43 @@ export interface OcrToken {
   bbox: { top: number; left: number; width: number; height: number } | null;
 }
 
+export type WorkflowStatus =
+  | 'draft'
+  | 'in_review'
+  | 'changes_requested'
+  | 'approved'
+  | 'rejected'
+  | 'action_required'
+  | 'under_review';
+
+export interface CampaignComment {
+  id: string;
+  user: {
+    id: string;
+    username: string;
+    role: string;
+  };
+  comment: string;
+  timestamp: string | Date;
+}
+
+export interface WorkflowEvent {
+  id: string;
+  campaignId: string;
+  reviewId?: string;
+  actionType: string;
+  fromStatus?: string;
+  toStatus?: string;
+  user: {
+    id: string;
+    username: string;
+    role: string;
+  };
+  timestamp: string | Date;
+  idempotencyKey?: string;
+  details?: Record<string, any>;
+}
+
 export interface CampaignPreset {
   id: string;
   code: string;
@@ -47,6 +84,7 @@ export interface CampaignPreset {
   aspectRatio: string;
   imageUrl: string;
   assetId?: string;
+  agency?: string;
   assetMetadata?: {
     mimeType?: string;
     size?: number;
@@ -62,7 +100,31 @@ export interface CampaignPreset {
   ocrLines?: OcrToken[];
   ocrWords?: OcrToken[];
   initialFindings: ComplianceFinding[];
-  status: 'action_required' | 'under_review' | 'approved' | 'rejected';
+  status: WorkflowStatus;
+  createdBy?: string;
+  creatorId?: string;
+  reviewedBy?: string;
+  reviewerId?: string;
+  reviewerRole?: string;
+  reviewedAt?: string | Date;
+  reviewerNotes?: string;
+  approvedBy?: string;
+  approverId?: string;
+  approverRole?: string;
+  approvedAt?: string | Date;
+  criticalOverrideReason?: string;
+  overrideApprovedBy?: string;
+  overrideApprovedAt?: string | Date;
+  rejectedBy?: string;
+  rejectedId?: string;
+  rejectedRole?: string;
+  rejectedAt?: string | Date;
+  rejectionReason?: string;
+  requestedChanges?: string;
+  changesRequestedBy?: string;
+  changesRequestedAt?: string | Date;
+  comments?: CampaignComment[];
+  safeZone?: any;
   sourceName?: string;
   sourceUrl?: string;
   licenseName?: string;

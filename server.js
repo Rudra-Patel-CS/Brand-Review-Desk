@@ -15,6 +15,7 @@ const db = require('./db');
 const auth = require('./auth');
 const storage = require('./storage');
 const ocrEngine = require('./ocrEngine');
+const workflow = require('./workflow');
 const multer = require('multer');
 
 const upload = multer({
@@ -638,7 +639,30 @@ app.post('/api/workspace/campaigns', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Campaign title is required' });
     }
     campaign.id = String(campaign.id || `campaign-${Date.now()}`);
+    campaign.createdBy = campaign.createdBy || req.user.username;
+    campaign.creatorId = campaign.creatorId || req.user.id;
+    campaign.status = workflow.normalizeStatus(campaign.status || 'draft');
+
     const saved = await db.saveWorkspaceCampaign(campaign);
+
+    // Log campaign creation event
+    const database = await db.connectDB();
+    await workflow.logEvent(
+      {
+        campaignId: saved.id,
+        actionType: 'campaign_created',
+        toStatus: saved.status,
+        user: req.user,
+        timestamp: new Date(),
+        details: {
+          title: saved.title,
+          brandName: saved.brandName,
+          channel: saved.channel
+        }
+      },
+      { database, memoryStore: db.memoryStore }
+    );
+
     res.status(201).json({ success: true, campaign: saved });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -654,6 +678,162 @@ app.put('/api/workspace/campaigns/:id', requireAuth, async (req, res) => {
     campaign.id = req.params.id;
     const saved = await db.saveWorkspaceCampaign(campaign);
     res.json({ success: true, campaign: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Review Workflow & Co-Approval Endpoints ───────────────────────────────────
+
+// Retrieve chronological event history for a campaign
+app.get('/api/workspace/campaigns/:id/events', requireAuth, async (req, res) => {
+  try {
+    const database = await db.connectDB();
+    const events = await workflow.getCampaignEvents(req.params.id, {
+      database,
+      memoryStore: db.memoryStore
+    });
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Execute a workflow status transition (Submit, Request Changes, Approve, Reject)
+app.post('/api/workspace/campaigns/:id/transition', requireAuth, async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    const campaign = await db.findWorkspaceCampaignById(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+
+    const {
+      targetStatus,
+      notes,
+      requestedChanges,
+      criticalOverrideReason,
+      allowSelfApproval,
+      idempotencyKey
+    } = req.body || {};
+
+    if (!targetStatus) {
+      return res.status(400).json({ error: 'targetStatus is required.' });
+    }
+
+    const database = await db.connectDB();
+    const result = await workflow.transitionWorkflow(
+      campaign,
+      {
+        targetStatus,
+        user: req.user,
+        notes,
+        requestedChanges,
+        criticalOverrideReason,
+        allowSelfApproval: Boolean(allowSelfApproval),
+        idempotencyKey
+      },
+      {
+        database,
+        memoryStore: db.memoryStore
+      }
+    );
+
+    // If approved or rejected, also sync with review history
+    if (result.toStatus === workflow.WORKFLOW_STATUSES.APPROVED || result.toStatus === workflow.WORKFLOW_STATUSES.REJECTED) {
+      const findings = Array.isArray(result.campaign.initialFindings) ? result.campaign.initialFindings : [];
+      const clearedCount = findings.filter(f => f.status !== 'open').length;
+      const openCount = findings.filter(f => f.status === 'open').length;
+
+      await db.addWorkspaceReview({
+        id: `rev-${campaign.id}-${Date.now()}`,
+        dossierNumber: `DOS-${campaign.code}`,
+        campaignTitle: campaign.title,
+        brandId: campaign.brandId,
+        brandName: campaign.brandName,
+        channel: campaign.channel,
+        reviewedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        reviewerName: req.user.username,
+        reviewerRole: req.user.role === auth.ROLES.ADMIN ? 'Workspace Administrator' : 'Senior Compliance Approver',
+        reviewerId: req.user.id,
+        auditId: `AUD-${Date.now()}`,
+        status: result.toStatus === workflow.WORKFLOW_STATUSES.APPROVED ? 'approved' : 'rejected',
+        findingsCount: findings.length,
+        clearedCount,
+        openCount,
+        imageUrl: campaign.imageUrl,
+        findings,
+        notes: notes || criticalOverrideReason || undefined,
+        timestamp: new Date()
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    if (err.code === 'INVALID_TRANSITION' || err.code === 'CRITICAL_OVERRIDE_REQUIRED') {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    if (err.code === 'UNAUTHORIZED_ROLE' || err.code === 'SELF_APPROVAL_RESTRICTED' || err.code === 'UNAUTHORIZED_REOPEN') {
+      return res.status(403).json({ error: err.message, code: err.code });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Append reviewer/approver comment
+app.post('/api/workspace/campaigns/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    const campaign = await db.findWorkspaceCampaignById(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+
+    const { comment } = req.body || {};
+    if (!comment || !String(comment).trim()) {
+      return res.status(400).json({ error: 'Comment text is required.' });
+    }
+
+    const database = await db.connectDB();
+    const result = await workflow.addCampaignComment(
+      campaign,
+      String(comment).trim(),
+      req.user,
+      {
+        database,
+        memoryStore: db.memoryStore
+      }
+    );
+
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export complete review audit record
+app.get('/api/workspace/campaigns/:id/export', requireAuth, async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    const campaign = await db.findWorkspaceCampaignById(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+
+    const database = await db.connectDB();
+    const events = await workflow.getCampaignEvents(campaignId, {
+      database,
+      memoryStore: db.memoryStore
+    });
+
+    const exportRecord = workflow.generateReviewExport(campaign, req.user, events);
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="review-audit-${campaign.code || campaign.id}.json"`
+    );
+    res.json(exportRecord);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -375,7 +375,8 @@ const memoryStore = {
   })),
   users: [],
   sessions: [],
-  audit_logs: []
+  audit_logs: [],
+  events: []
 };
 
 function isDnsLookupError(err) {
@@ -481,9 +482,11 @@ async function initDatabaseTables(database) {
     if (!colNames.includes('users')) await database.createCollection('users');
     if (!colNames.includes('sessions')) await database.createCollection('sessions');
     if (!colNames.includes('campaigns')) await database.createCollection('campaigns');
+    if (!colNames.includes('events')) await database.createCollection('events');
 
     await ensureUserIndexes(database);
     await ensureSessionIndexes(database);
+    await ensureEventIndexes(database);
     await ensureDemoCatalog(database);
     await ensureCommonsReferences(database);
   } catch (err) {
@@ -519,6 +522,21 @@ async function ensureUserIndexes(database) {
     await database.collection('users').createIndex(
       { emailLower: 1 },
       { unique: true, name: 'uniq_email_lower' }
+    );
+  } catch (err) {
+    // Indexes might already exist
+  }
+}
+
+async function ensureEventIndexes(database) {
+  try {
+    await database.collection('events').createIndex(
+      { campaignId: 1, timestamp: 1 },
+      { name: 'idx_campaign_timestamp' }
+    );
+    await database.collection('events').createIndex(
+      { idempotencyKey: 1 },
+      { unique: true, sparse: true, name: 'uniq_idempotency_key' }
     );
   } catch (err) {
     // Indexes might already exist
@@ -917,6 +935,12 @@ function normalizeWorkspaceRule(record) {
 function normalizeWorkspaceCampaign(record) {
   const { _id, ...plainRecord } = record;
   const imageUrl = String(record.imageUrl || record.image || '');
+
+  // Map legacy / initial preset statuses
+  let status = record.status || 'draft';
+  if (status === 'action_required') status = 'draft';
+  if (status === 'under_review') status = 'in_review';
+
   return {
     ...plainRecord,
     id: String(record.id || record.campaignId || record._id || ''),
@@ -929,6 +953,7 @@ function normalizeWorkspaceCampaign(record) {
     aspectRatio: record.aspectRatio || '4/3',
     imageUrl: imageUrl.replace(/^\/assets\/screen_/, '/assets/aistudio/screen_'),
     caption: record.caption || '',
+    agency: record.agency || '',
     ocrText: record.ocrText || '',
     ocrConfidence: Number(record.ocrConfidence || 0),
     extractedText: record.extractedText || record.ocrText || '',
@@ -936,7 +961,27 @@ function normalizeWorkspaceCampaign(record) {
     ocrLines: Array.isArray(record.ocrLines) ? record.ocrLines : [],
     ocrWords: Array.isArray(record.ocrWords) ? record.ocrWords : [],
     initialFindings: Array.isArray(record.initialFindings) ? record.initialFindings : [],
-    status: record.status || 'action_required',
+    status,
+    createdBy: record.createdBy || '',
+    creatorId: record.creatorId || '',
+    reviewedBy: record.reviewedBy || '',
+    reviewerId: record.reviewerId || '',
+    reviewerRole: record.reviewerRole || '',
+    reviewedAt: record.reviewedAt || null,
+    reviewerNotes: record.reviewerNotes || '',
+    approvedBy: record.approvedBy || '',
+    approverId: record.approverId || '',
+    approverRole: record.approverRole || '',
+    approvedAt: record.approvedAt || null,
+    criticalOverrideReason: record.criticalOverrideReason || '',
+    rejectedBy: record.rejectedBy || '',
+    rejectedId: record.rejectedId || '',
+    rejectedRole: record.rejectedRole || '',
+    rejectedAt: record.rejectedAt || null,
+    rejectionReason: record.rejectionReason || '',
+    requestedChanges: record.requestedChanges || '',
+    comments: Array.isArray(record.comments) ? record.comments : [],
+    safeZone: record.safeZone || null,
     sourceName: record.sourceName || '',
     sourceUrl: record.sourceUrl || '',
     licenseName: record.licenseName || '',
@@ -1101,6 +1146,18 @@ async function saveWorkspaceCampaign(campaign) {
   const newCampaign = { ...value, createdAt: new Date() };
   memoryStore.campaigns.unshift(newCampaign);
   return newCampaign;
+}
+
+async function findWorkspaceCampaignById(id) {
+  if (!id) return null;
+  const targetId = String(id);
+  const currentDb = await connectDB();
+  if (currentDb && isConnected) {
+    const doc = await currentDb.collection('campaigns').findOne({ id: targetId });
+    return doc ? normalizeWorkspaceCampaign(doc) : null;
+  }
+  const memDoc = memoryStore.campaigns.find((c) => String(c.id) === targetId);
+  return memDoc ? normalizeWorkspaceCampaign(memDoc) : null;
 }
 
 async function addWorkspaceReview(review) {
@@ -1311,6 +1368,7 @@ module.exports = {
   saveWorkspaceRule,
   deleteWorkspaceRule,
   saveWorkspaceCampaign,
+  findWorkspaceCampaignById,
   addWorkspaceReview,
   commonsCampaigns,
   memoryStore
