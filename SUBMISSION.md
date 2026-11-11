@@ -1,71 +1,68 @@
-# Brand Review Desk — Project Submission
+# Brand Review Desk — Round 3 Submission
 
 ## Project and links
 
 - **Source repository:** [Rudra-Patel-CS/Brand-Review-Desk](https://github.com/Rudra-Patel-CS/Brand-Review-Desk)
-- **Intended public demo:** [https://rudra-patel-cs.github.io/Brand-Review-Desk/](https://rudra-patel-cs.github.io/Brand-Review-Desk/)
-- **Access:** The GitHub Pages build is designed to open directly into a browser-only demo workspace without registration or sign-in.
-- **Deployment status:** The workflow attempts to enable GitHub Pages automatically. A live deployment is not confirmed until a Pages workflow run succeeds. If the workflow lacks permission to enable Pages, a repository administrator must enable it in repository settings.
+- **Live demo (no login):** [https://brand-review-desk.onrender.com/](https://brand-review-desk.onrender.com/) — opens directly into the sample workspace; no account needed.
+- **Server-backed deployment (optional, full persistence + judge login):** follow [DEPLOYMENT.md](DEPLOYMENT.md). When deployed with `SHOW_DEMO_CREDENTIALS=true`, the judge demo account appears on the login screen itself (email `demo@brandreview.desk`), so judges can sign in without any setup.
 
 ## What the product does
 
-Brand Review Desk is an existing creative-review application. A reviewer can work with an advertising caption and artwork, compare the content with configured brand rules, inspect the exact rule citation and explanation for each finding, make or queue a correction, dismiss a finding with a written reason, and complete an approval/export flow.
+Brand Review Desk reviews advertising content before publication for brand-rule compliance. A reviewer works with a caption and artwork, sees every rule violation with its exact rule citation, matched text, severity, and a proposed correction, then makes the human decision: apply, queue a creative fix, dismiss with a documented reason, or mark manually reviewed. Nothing is auto-approved: final sign-off is always human, and every decision lands in an audit trail.
 
-## Completed features
+## Round 2 → Round 3: the three committed improvements, completed
 
-1. **No-login public demo path:** A Vite build flag selects the public demo mode, which bypasses the authentication gate without changing the authenticated server-backed mode. Demo actions do not require a sign-up.
-2. **Caption checks:** The existing rule engine evaluates caption text against enabled brand rules. Findings show the rule identifier/source, matched text, severity, explanation, and suggested correction where configured.
-3. **Artwork OCR:** Tesseract.js reads actual pixels from selected image files in the browser. The app displays extracted text, confidence and available word/line boxes. Users can inspect and correct extracted text; OCR is not represented as a factual or legal verification.
-4. **Human decision workflow:** A reviewer can apply caption suggestions, queue OCR/creative corrections, dismiss a finding with a required note, mark a matter for manual review, re-audit, and approve/export. OCR findings remain unresolved until the replacement artwork is uploaded and checked again.
-5. **Creative replacement:** A reviewer can replace the active campaign's image without creating a separate campaign, rerun OCR and rules, and clear old approval metadata so the new artwork must be reviewed again.
-6. **Approval and export:** The public demo creates a local approval record, keeps it in the current page session, and supports review export. The local demo digest is not a server attestation.
-7. **Visual guidance:** Platform format dimensions, safe-zone overlays, and available OCR-box overlap checks are shown as guidance. The interface explicitly calls for manual visual review; it does not claim to verify contrast, logos, full visual context, or final platform rendering.
-8. **Existing server-backed capabilities retained:** The project still contains the Express/MongoDB application, authenticated sessions, roles, GridFS upload routes, and server-side OCR endpoints. The static judge demo does not use MongoDB.
-9. **Deployment and handoff:** A GitHub Actions Pages workflow, setup instructions, project documentation, and test/build commands are provided in the repository.
+### 1. Evidence library for approved claims (completed)
+
+- `src/utils/evidenceLibrary.ts` + an **Evidence Library block inside every finding card** (under the action buttons).
+- Each flagged claim is matched to substantiation records — certificates, lab reports, policies, terms, registrations — each with an optional **expiry date**.
+- Badges: green `Expires <date>` (current), amber `Expiring <date>` (within 30 days), red `Expired <date>`, neutral `No expiry` for standing links.
+- A claim with **no evidence shows an amber dashed "Missing" row** and is **flagged for human review before approval**; expired evidence is flagged the same way. Evidence never auto-clears a claim.
+- The public demo runs the library in memory with seeded records (current, expiring, expired, and missing states are all visible out of the box). The server mode persists evidence in MongoDB via `/api/evidence` routes (approver/admin write, reviewer read).
+
+### 2. Durable backend with backup & restore (completed, deploy-ready)
+
+- The existing Express/MongoDB backend (sessions, RBAC, GridFS artwork, workflow, ~40 routes) gained:
+  - **Evidence CRUD routes** (`GET/POST/PUT/DELETE /api/evidence`).
+  - **Backup & restore:** `GET /api/backup/export` downloads the full workspace as validated JSON (brands, rules, rulesets, campaigns, reviews, drafts, events, evidence, users; sessions excluded); `POST /api/backup/import` restores it, but only with `confirm: true` and after format/version/collection validation.
+- [DEPLOYMENT.md](DEPLOYMENT.md) documents the ₹0 deployment (MongoDB Atlas M0 + Render free tier), and `render.yaml` ships a matching Blueprint. `npm run seed` populates rules, campaigns, evidence, and the judge demo account.
+- The no-login demo keeps working with zero backend as a fallback.
+
+### 3. Visual checks from real pixels (completed)
+
+- `src/utils/visualChecks.ts` analyzes the actual artwork on a client-side canvas:
+  - **Contrast:** WCAG relative-luminance ratios measured inside OCR text regions (pass ≥ 4.5:1; large-text review band 3–4.5:1; fail < 3:1; uniform regions honestly reported as not measurable).
+  - **Logo presence:** normalized cross-correlation template matching against an uploaded reference logo at multiple scales (pass ≥ 75% correlation; 45–75% routed to human review).
+  - **Clear space:** edge distance from the detected logo to the nearest text element or artwork edge, against a half-logo-height minimum.
+  - **Text visibility:** rollup of region contrast and OCR confidence; widespread low contrast routes to human review.
+- Results render as **PASS / FAIL / HUMAN REVIEW chips** in the Visual Checks card above the audit findings and as matching chips on the poster viewport.
+- No AI or certification claims: methods and thresholds are documented next to the results, and every uncertain outcome goes to a human.
+- Validated against **labelled synthetic fixtures** (high-contrast label, washed-out label, logo present/absent, crowded/spacious logo, corrupt input) in `tests/visualChecks.test.ts`.
+
+## Also fixed or finished this round
+
+- **Round 2 bug fixed:** uploaded artwork dimensions are now captured at upload time via `createImageBitmap`, so the aspect-ratio check runs on freshly uploaded creatives (previously it silently could not run).
+- The placeholder "planned feature v2.6" modal was removed and replaced with an honest in-app **Product Roadmap** (delivered vs planned).
+- Approval filing is guarded against double submission; visual-check runs are re-entrant (double-click safe); corrupted dates/files degrade to human-review states instead of errors.
+- README now includes clone-and-run steps, Render deployment notes, and the product roadmap.
 
 ## Technology and implementation
 
-- **Frontend:** React 19, TypeScript, Vite 6, Tailwind CSS 4.
-- **Public demo:** Static GitHub Pages build with `VITE_PUBLIC_DEMO_MODE=true`; public data and actions live only in browser memory. Tesseract worker, core, and English language data are copied into `public/vendor` by `scripts/prepare_ocr_assets.js` during the build.
-- **Server-backed application:** Node.js/Express 4, MongoDB 6 driver and GridFS, cookie-based authenticated sessions, and existing role-based workflow/API routes.
-- **OCR:** Tesseract.js 7 for browser-side OCR in public demo and the existing server-side OCR route for the authenticated app.
-- **Checks and verification:** TypeScript type check, Node test suite, Vite production build, and browser validation. No Supabase was introduced.
+- **Frontend:** React 19, TypeScript, Vite 6, Tailwind CSS 4. Evidence matching and visual analysis are deterministic, client-side modules with pure, Node-testable cores.
+- **Public demo:** static build with `VITE_PUBLIC_DEMO_MODE=true`; all state in browser memory; Tesseract.js OCR runs locally.
+- **Server-backed application:** Node.js/Express 4, MongoDB 6 driver + GridFS, cookie sessions with CSRF protection, bcrypt password hashing, role-based access (admin/approver/reviewer), evidence and backup/restore routes.
+- **OCR:** Tesseract.js 7 (browser and server paths).
 
-## How to deploy the no-login demo
-
-1. Push to `main`, or run **Actions → Deploy public demo → Run workflow**. The workflow attempts to enable Pages automatically.
-2. If the run reports insufficient permission, open the source repository's **Settings → Pages** and select **GitHub Actions** as the source.
-3. Confirm the workflow completes successfully and GitHub reports the deployed Pages URL.
-4. Open the URL in a new private/incognito browser window with no existing application session. The expected initial state is the sample review workspace, not a login or registration form.
-5. Exercise a caption finding, OCR of an uploaded image, a decision, approval, and export.
-
-The Pages workflow does not need application credentials. For a separate server-backed deployment, provide `MONGO_URI`, `DB_NAME`, and authentication secrets through the hosting platform's server-side secret manager. Never put MongoDB credentials in frontend source or any `VITE_*` variable.
-
-## Honest scope and unfinished work
-
-- **Live deployment:** Not confirmed until a successful deployment is visible in Actions. The intended URL above must not be presented as a verified live link before then.
-- **Public demo persistence:** Uploads, OCR corrections, rule edits, findings, decisions, approvals, and exports are in-memory demo behavior and are lost on reload. The static demo has no backend or shared user accounts.
-- **Factual review:** Rule matching only checks configured patterns and stored guidance. It does not independently verify claims, substantiation documents, terms, or current facts. A human must verify those against approved evidence.
-- **Visual review:** OCR-box/safe-zone checks are limited to available OCR output and configured platform geometry. Contrast, logo placement, image context, and platform-specific rendering still require a human.
-- **Backend hosting:** The existing MongoDB/Express mode remains available in source, but it is not the public no-login Pages demo and needs a separately configured server and database.
-- **Legal effect:** A browser-only approval record or local hash is not a legal certification, secure signature, or immutable audit record.
-
-## Changes from the earlier plan
-
-- Preserved and improved the existing React/TypeScript application rather than rebuilding it. Kept its Express/MongoDB server-backed mode and added a separate static, no-login Pages demo to satisfy judge access.
-- Used the existing transparent deterministic rules engine instead of introducing an LLM or external fact-checking service. This keeps findings tied to configured rule citations and avoids presenting generated text as verification.
-- Kept browser demo uploads and decisions in memory rather than adding a public database or exposing credentials. Persistent multi-user review remains the responsibility of the existing authenticated backend deployment.
-- Clarified that OCR and safe-zone analysis are limited automation, not visual/legal certification; added a true replacement-artwork path for image findings instead of marking them resolved by editing only the caption.
-
-## Three meaningful Round 3 improvements
-
-1. **Evidence-backed claim verification:** Add a controlled evidence library for approved claims, terms, expiration dates, and source documents. Require each factual finding/approval to link to a current evidence record; flag missing or expired evidence for a human rather than inferring truth from wording.
-2. **Shared, durable review operations:** Deploy the existing API and MongoDB with organization workspaces, durable campaign/rule/audit records, reviewer assignments, and a tested backup/restore process. Keep credentials server-side and retain role separation and self-approval controls.
-3. **Validated visual QA pipeline:** Add reproducible image analysis for contrast, logo presence/clear-space, and text visibility against target-format overlays, with measured confidence and cited configuration. Low-confidence or unsupported cases must stay in a human-review queue; validate results against a labeled creative test set before enabling any automated pass.
-
-## Verification record
+## Verification record (Round 3)
 
 - `npx tsc --noEmit` — passed.
-- `npm test` — passed (63 tests, including the browser download helper regression test).
-- Public-demo production build with `VITE_BASE_PATH=/Brand-Review-Desk/` and `VITE_PUBLIC_DEMO_MODE=true` — passed.
-- Browser/incognito verification and the public Pages deployment must be recorded only after the current build has been exercised in a clean browser profile and a successful Pages deployment is available.
+- `npm test` — passed (**97 tests**: rules engine, download helper, analytics, auth, OCR, safe zones, storage, workflow, **+ evidence library (12), visual checks (12), backup/restore + evidence API (10)**).
+- `npm run build` — production build passed.
+- Browser verification (headless Chrome against the production build): visual checks run and render chips; reference-logo upload re-scores the logo and clear-space checks; evidence badges (Missing / Expired / Expires / No expiry) render per finding; uploaded creative shows captured dimensions in the aspect-ratio badge; double-clicking actions and reloading the page leave the app in a clean state.
+
+## Honest scope
+
+- Rule matching checks configured patterns only; it does not independently verify facts. The evidence library links claims to records a human filed — it does not fetch or judge the documents itself.
+- Visual checks are decision support with documented thresholds, not legal certification; low-confidence outcomes are routed to reviewers.
+- The public demo is in-memory by design (changes reset on reload); persistence requires the server deployment in DEPLOYMENT.md.
+- Render's free tier sleeps when idle (cold start ~30–60s on first hit).

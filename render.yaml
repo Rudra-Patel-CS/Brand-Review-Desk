@@ -1,0 +1,26 @@
+# Render Blueprint for the server-backed Brand Review Desk deployment.
+# Create with: Render Dashboard -> New -> Blueprint -> select this repository.
+# Set MONGO_URI, SESSION_SECRET and (for judging) DEMO_USER_PASSWORD in the
+# Render dashboard; never commit real values here.
+services:
+  - type: web
+    name: brand-review-desk
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DB_NAME
+        value: Brand_Review_Desk
+      - key: MONGO_URI
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: VITE_PUBLIC_DEMO_MODE
+        value: "false"
+      - key: SHOW_DEMO_CREDENTIALS
+        value: "true"
+      - key: DEMO_USER_EMAIL
+        value: demo@brandreview.desk
+      - key: DEMO_USER_PASSWORD
+        sync: false

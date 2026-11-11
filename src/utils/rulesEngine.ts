@@ -92,7 +92,11 @@ export interface CampaignPreset {
     extension?: string;
     uploadedBy?: string;
     uploadedAt?: string | Date;
+    width?: number;
+    height?: number;
   };
+  /** Pixel dimensions captured at upload time via createImageBitmap */
+  imageDimensions?: { width: number; height: number };
   caption: string;
   ocrText: string;
   ocrConfidence: number;

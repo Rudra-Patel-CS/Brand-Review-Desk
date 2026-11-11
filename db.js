@@ -338,6 +338,7 @@ const memoryStore = {
   rulesets: [JSON.parse(JSON.stringify(defaultRuleset))],
   brands: JSON.parse(JSON.stringify(defaultBrands)),
   drafts: [],
+  evidence: [],
   reviews: [
     {
       id: "rev-20261106-001",
@@ -1429,10 +1430,165 @@ async function getInsights() {
   };
 }
 
+// ── Evidence Library (claim substantiation records with expiry) ─────────────
+
+function normalizeEvidence(doc) {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return rest;
+}
+
+async function listEvidence() {
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const rows = await currentDb.collection('evidence').find({}).toArray();
+      return rows.map(normalizeEvidence);
+    }
+  }
+  return memoryStore.evidence.map(normalizeEvidence);
+}
+
+async function saveEvidenceDocument(doc) {
+  if (!doc || !doc.id) throw new Error('Evidence document requires an id.');
+  const value = { ...doc, updatedAt: new Date() };
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      await currentDb.collection('evidence').updateOne(
+        { id: String(doc.id) },
+        { $set: value, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true }
+      );
+      return currentDb.collection('evidence').findOne({ id: String(doc.id) });
+    }
+  }
+  const idx = memoryStore.evidence.findIndex((d) => d.id === doc.id);
+  if (idx !== -1) {
+    memoryStore.evidence[idx] = { ...memoryStore.evidence[idx], ...value };
+    return memoryStore.evidence[idx];
+  }
+  const created = { ...value, createdAt: new Date() };
+  memoryStore.evidence.push(created);
+  return created;
+}
+
+async function deleteEvidenceDocument(id) {
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      const result = await currentDb.collection('evidence').deleteOne({ id: String(id) });
+      return result.deletedCount > 0;
+    }
+  }
+  const before = memoryStore.evidence.length;
+  memoryStore.evidence = memoryStore.evidence.filter((d) => d.id !== id);
+  return memoryStore.evidence.length < before;
+}
+
+// ── Backup & Restore ────────────────────────────────────────────────────────
+
+const BACKUP_FORMAT = 'brand-review-desk-backup';
+const BACKUP_VERSION = 1;
+// sessions are deliberately excluded (ephemeral login state).
+const BACKUP_COLLECTIONS = ['brands', 'rules', 'rulesets', 'campaigns', 'reviews', 'drafts', 'events', 'evidence', 'users'];
+
+async function exportBackup() {
+  const collections = {};
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      for (const name of BACKUP_COLLECTIONS) {
+        const rows = await currentDb.collection(name).find({}).toArray();
+        collections[name] = rows.map((row) => {
+          const { _id, ...rest } = row;
+          return rest;
+        });
+      }
+      return {
+        format: BACKUP_FORMAT,
+        version: BACKUP_VERSION,
+        exportedAt: new Date().toISOString(),
+        database: DB_NAME,
+        collections
+      };
+    }
+  }
+  for (const name of BACKUP_COLLECTIONS) {
+    const rows = Array.isArray(memoryStore[name]) ? memoryStore[name] : [];
+    collections[name] = rows.map((row) => {
+      const { _id, ...rest } = row;
+      return rest;
+    });
+  }
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    database: isolatedTestMode ? 'isolated-test' : 'memory-fallback',
+    collections
+  };
+}
+
+function validateBackupPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Backup payload must be a JSON object.');
+  }
+  if (payload.format !== BACKUP_FORMAT) {
+    throw new Error(`Unrecognized backup format. Expected "${BACKUP_FORMAT}".`);
+  }
+  if (typeof payload.version !== 'number' || payload.version > BACKUP_VERSION) {
+    throw new Error(`Unsupported backup version. This server restores version ${BACKUP_VERSION} or older.`);
+  }
+  if (!payload.collections || typeof payload.collections !== 'object') {
+    throw new Error('Backup payload has no collections object.');
+  }
+  for (const [name, rows] of Object.entries(payload.collections)) {
+    if (!BACKUP_COLLECTIONS.includes(name)) {
+      throw new Error(`Backup contains unknown collection "${name}".`);
+    }
+    if (!Array.isArray(rows)) {
+      throw new Error(`Collection "${name}" must be an array.`);
+    }
+  }
+}
+
+async function importBackup(payload) {
+  validateBackupPayload(payload);
+  const restored = {};
+  if (!isolatedTestMode) {
+    const currentDb = await connectDB();
+    if (currentDb && isConnected) {
+      for (const name of BACKUP_COLLECTIONS) {
+        const rows = payload.collections[name];
+        if (!Array.isArray(rows)) continue;
+        await currentDb.collection(name).deleteMany({});
+        if (rows.length) {
+          await currentDb.collection(name).insertMany(rows);
+        }
+        restored[name] = rows.length;
+      }
+      return { restored, mode: 'mongodb' };
+    }
+  }
+  for (const name of BACKUP_COLLECTIONS) {
+    const rows = payload.collections[name];
+    if (!Array.isArray(rows)) continue;
+    memoryStore[name] = rows.map((row) => ({ ...row }));
+    restored[name] = rows.length;
+  }
+  return { restored, mode: isolatedTestMode ? 'isolated-test' : 'memory-fallback' };
+}
+
 module.exports = {
   connectDB,
   getStatus,
   isDbConnected: () => isConnected,
+  listEvidence,
+  saveEvidenceDocument,
+  deleteEvidenceDocument,
+  exportBackup,
+  importBackup,
   getActiveRuleset,
   saveRuleset,
   resetRuleset,

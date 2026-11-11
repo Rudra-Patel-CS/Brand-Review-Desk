@@ -22,6 +22,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [loading, setLoading] = useState(false);
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [showRegistrationNotice, setShowRegistrationNotice] = useState(false);
+  const [demoAccount, setDemoAccount] = useState<{ email: string; password: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +41,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       } else {
         setBootstrapRequired(false);
         setMode('login');
+      }
+      if (bootstrapData?.demoAccount?.email && bootstrapData?.demoAccount?.password) {
+        setDemoAccount(bootstrapData.demoAccount);
       }
     });
 
@@ -275,6 +279,32 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               >
                 <span className="material-symbols-outlined text-[18px] shrink-0">check_circle</span>
                 <span>{success}</span>
+              </div>
+            )}
+
+            {demoAccount && mode === 'login' && (
+              <div className="mb-4 rounded-xl border border-secondary/30 bg-secondary/5 px-4 py-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-secondary">
+                  <span className="material-symbols-outlined text-[16px]">admin_panel_settings</span>
+                  Judge Demo Account
+                </div>
+                <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                  Use this shared demo login to explore the full workspace (no registration needed):
+                </p>
+                <div className="font-mono text-[11px] text-on-surface bg-surface-container-lowest rounded-lg border border-surface-container-high px-3 py-2 space-y-0.5">
+                  <div>Email: <strong>{demoAccount.email}</strong></div>
+                  <div>Password: <strong>{demoAccount.password}</strong></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUsername(demoAccount.email);
+                    setPassword(demoAccount.password);
+                  }}
+                  className="text-[11px] font-semibold text-secondary hover:text-primary underline"
+                >
+                  Fill the login form with the demo account
+                </button>
               </div>
             )}
 

@@ -13,6 +13,10 @@ import {
 import { getCsrfToken, AuthUser } from '../utils/auth.js';
 import { recognizeInBrowser } from '../utils/browserOcr.js';
 import { downloadBlob } from '../utils/download.js';
+import { EvidenceDocument } from '../utils/evidenceLibrary.js';
+import { VisualCheckResult } from '../utils/visualChecks.js';
+import { EvidenceLibraryBlock } from './EvidenceLibraryBlock.js';
+import { VisualChecksCard, VerdictChip } from './VisualChecksCard.js';
 import { WorkflowActionModal, WorkflowModalAction } from './modals/WorkflowActionModal.js';
 import { EventHistoryModal } from './modals/EventHistoryModal.js';
 import {
@@ -67,7 +71,8 @@ interface ReviewContentProps {
   onUpdateCampaign?: (campaign: CampaignPreset) => void;
   onOpenApproveModal: (campaign: CampaignPreset, caption: string, findings: ComplianceFinding[]) => void;
   onOpenDismissModal: (finding: ComplianceFinding) => void;
-  onOpenPlannedModal: (title: string) => void;
+  onOpenRoadmapModal: () => void;
+  evidenceLibrary: EvidenceDocument[];
 }
 
 export const ReviewContent: React.FC<ReviewContentProps> = ({
@@ -84,7 +89,8 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   onUpdateCampaign,
   onOpenApproveModal,
   onOpenDismissModal,
-  onOpenPlannedModal
+  onOpenRoadmapModal,
+  evidenceLibrary
 }) => {
   const [currentCaption, setCurrentCaption] = useState(activeCampaign.caption);
   const [currentOcrText, setCurrentOcrText] = useState(
@@ -112,6 +118,9 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [isSafeZonePanelExpanded, setIsSafeZonePanelExpanded] = useState<boolean>(true);
 
+  // Visual Checks (WCAG contrast / logo / clear space / text visibility)
+  const [visualResults, setVisualResults] = useState<VisualCheckResult[] | null>(null);
+
   const findingRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
   // Sync state when active campaign changes
@@ -124,7 +133,18 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
     setSelectedFindingId(null);
     setOcrError(null);
     setSelectedFormatId(detectDefaultFormatId(activeCampaign.format));
-    setImageDimensions(null);
+    // Prefer dimensions captured at upload time (createImageBitmap); the
+    // <img> onLoad handler remains as a fallback for preset artwork.
+    const uploadedDims =
+      activeCampaign.imageDimensions ||
+      (activeCampaign.assetMetadata?.width && activeCampaign.assetMetadata?.height
+        ? {
+            width: activeCampaign.assetMetadata.width,
+            height: activeCampaign.assetMetadata.height
+          }
+        : null);
+    setImageDimensions(uploadedDims);
+    setVisualResults(null);
   }, [activeCampaign]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -1064,6 +1084,20 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                   );
                 })}
 
+                {/* Visual Checks verdict chips */}
+                {visualResults && (
+                  <div className="absolute bottom-3 left-3 flex flex-col items-start gap-1 max-w-[70%] z-20 pointer-events-auto">
+                    {visualResults.map((result) => (
+                      <div
+                        key={result.id}
+                        className="bg-surface-container-lowest/90 backdrop-blur-md rounded-full shadow-md"
+                      >
+                        <VerdictChip result={result} compact />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Overlays Watermark Pill */}
                 <div className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-inverse-surface/85 backdrop-blur-md px-2.5 py-1 rounded-md text-inverse-on-surface font-mono text-[11px] pointer-events-none">
                   <span className="material-symbols-outlined text-[15px] text-secondary-fixed">
@@ -1442,6 +1476,21 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
             </div>
           </div>
 
+          {/* Visual Checks Card (contrast / logo / clear space / text visibility) */}
+          <VisualChecksCard
+            campaign={activeCampaign}
+            ocrWords={
+              activeCampaign.ocrWords?.length
+                ? activeCampaign.ocrWords
+                : activeCampaign.ocrLines?.length
+                  ? activeCampaign.ocrLines
+                  : findings.filter((f) => f.bbox).map((f) => ({ text: f.matchedText, confidence: 0, bbox: f.bbox! }))
+            }
+            ocrConfidence={activeCampaign.ocrConfidence}
+            results={visualResults}
+            onResults={setVisualResults}
+          />
+
           {/* Audit Log Header */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -1608,30 +1657,33 @@ export const ReviewContent: React.FC<ReviewContentProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Evidence Library: substantiation records for this claim */}
+                  <EvidenceLibraryBlock finding={finding} library={evidenceLibrary} />
                 </div>
               );
             })}
           </div>
 
-          {/* 4. Future Capabilities Callout (Planned Area) */}
+          {/* 4. Product Roadmap Callout */}
           <div
-            onClick={() => onOpenPlannedModal('Automated Safe-Zone & Co-Signatures')}
+            onClick={onOpenRoadmapModal}
             className="p-4 rounded-xl bg-surface-container-low border border-surface-container-high cursor-pointer hover:bg-surface-container transition-all flex items-start gap-3 shadow-xs"
           >
             <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center text-secondary flex-shrink-0">
-              <span className="material-symbols-outlined text-[18px]">science</span>
+              <span className="material-symbols-outlined text-[18px]">map</span>
             </div>
             <div className="space-y-0.5 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="px-1.5 py-0.2 rounded bg-secondary-fixed text-on-secondary-fixed font-mono text-[10px] font-bold">
-                  PLANNED • v2.6
+                  ROADMAP
                 </span>
                 <span className="font-sans text-xs font-bold text-on-surface">
-                  Automated Safe-Zone & Co-Signatures
+                  Product Roadmap & Future Plan
                 </span>
               </div>
               <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                Multi-counsel approvals and TikTok UI overlap safe-zone checks are scheduled for next platform release. Click to learn more.
+                See what this build delivers (evidence library, visual checks, durable backend) and what is planned next. Click to open.
               </p>
             </div>
           </div>

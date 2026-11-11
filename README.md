@@ -34,7 +34,7 @@ npm run preview -- --host 127.0.0.1
 - The portal bypasses sign-in by default. Set `VITE_PUBLIC_DEMO_MODE=false` to re-enable the authenticated, MongoDB-backed deployment.
 - The demo uses in-memory browser state. Uploaded creative, OCR results, rule edits, findings, decisions, approvals, and exports are not sent to a backend and are lost when the page is reloaded.
 - Caption and OCR text findings come from the configured deterministic rules. The app does not independently verify factual claims, evidence, legal compliance, trademarks, or visual brand requirements.
-- Tesseract.js performs actual browser OCR on uploaded raster artwork; confidence and boxes come from OCR output. OCR can miss or misread text. Safe-zone checks compare available OCR boxes with configured format zones and are guidance only; visual layout, contrast, logo placement, and platform rendering still require human inspection.
+- Tesseract.js performs actual browser OCR on uploaded raster artwork; confidence and boxes come from OCR output. OCR can miss or misread text. Safe-zone checks compare available OCR boxes with configured format zones and are guidance only. The Visual Checks card measures contrast, logo match, clear space, and text visibility from real pixels with documented thresholds, but low-confidence or unconfigured checks are routed to human review and final visual sign-off stays with a reviewer.
 - Sample archive entries are illustrative, have no genuine reviewer attestation or sample hash, and are explicitly labeled. A hash created during the public demo is a local content digest, not a server-side signature.
 
 ### GitHub Pages deployment

@@ -8,7 +8,6 @@ interface InsightsAnalyticsProps {
   brands?: Brand[];
   campaigns?: CampaignPreset[];
   reviews?: ReviewRecord[];
-  onOpenPlannedModal?: (title: string) => void;
   isDemoMode?: boolean;
 }
 

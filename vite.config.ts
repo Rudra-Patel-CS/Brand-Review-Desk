@@ -28,7 +28,7 @@ export default defineConfig(() => {
       },
       preview: {
         // Allow any host so public tunnels (cloudflare/ngrok) can reach the demo build.
-        allowedHosts: true,
+        allowedHosts: true as const,
       },
   };
 });

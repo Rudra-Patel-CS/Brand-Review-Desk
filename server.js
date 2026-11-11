@@ -106,10 +106,19 @@ function extractSessionId(req) {
 app.get('/api/auth/bootstrap-status', async (req, res) => {
   try {
     const userCount = await db.countUsers();
-    res.json({
+    const payload = {
       bootstrapRequired: userCount === 0,
       userCount
-    });
+    };
+    // Judge/demo access: when explicitly enabled for a demo deployment, the
+    // login screen can show the seeded demo account. Off by default.
+    if (process.env.SHOW_DEMO_CREDENTIALS === 'true') {
+      payload.demoAccount = {
+        email: process.env.DEMO_USER_EMAIL || 'demo@brandreview.desk',
+        password: process.env.DEMO_USER_PASSWORD || 'DemoReview!2026'
+      };
+    }
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ error: 'Could not determine bootstrap status' });
   }
@@ -1047,6 +1056,86 @@ app.get('/api/insights', requireAuth, async (req, res) => {
     res.json(insights);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Evidence Library Endpoints ──────────────────────────────────────────────
+
+app.get('/api/evidence', requireAuth, async (req, res) => {
+  try {
+    const evidence = await db.listEvidence();
+    res.json({ evidence });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/evidence', requireAuth, requireRole([auth.ROLES.ADMIN, auth.ROLES.APPROVER]), async (req, res) => {
+  try {
+    const doc = req.body || {};
+    if (!doc.id || !doc.title || !Array.isArray(doc.claimKeywords)) {
+      return res.status(400).json({ error: 'Evidence document requires id, title, and claimKeywords array.' });
+    }
+    const saved = await db.saveEvidenceDocument(doc);
+    res.status(201).json({ document: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/evidence/:id', requireAuth, requireRole([auth.ROLES.ADMIN, auth.ROLES.APPROVER]), async (req, res) => {
+  try {
+    const doc = { ...(req.body || {}), id: req.params.id };
+    if (!doc.title || !Array.isArray(doc.claimKeywords)) {
+      return res.status(400).json({ error: 'Evidence document requires title and claimKeywords array.' });
+    }
+    const saved = await db.saveEvidenceDocument(doc);
+    res.json({ document: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/evidence/:id', requireAuth, requireRole([auth.ROLES.ADMIN]), async (req, res) => {
+  try {
+    const deleted = await db.deleteEvidenceDocument(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Evidence document not found.' });
+    }
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Backup & Restore Endpoints (Admin only) ─────────────────────────────────
+
+app.get('/api/backup/export', requireAuth, requireRole([auth.ROLES.ADMIN]), async (req, res) => {
+  try {
+    const backup = await db.exportBackup();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="brand-review-desk-backup-${new Date().toISOString().slice(0, 10)}.json"`
+    );
+    res.json(backup);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/backup/import', requireAuth, requireRole([auth.ROLES.ADMIN]), async (req, res) => {
+  try {
+    const { backup, confirm } = req.body || {};
+    if (confirm !== true) {
+      return res.status(400).json({
+        error: 'Restore replaces current workspace data. Re-send with "confirm": true to proceed.'
+      });
+    }
+    const result = await db.importBackup(backup);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

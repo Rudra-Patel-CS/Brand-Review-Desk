@@ -18,9 +18,10 @@ import { NewRuleModal } from './components/modals/NewRuleModal.js';
 import { ApproveExportModal } from './components/modals/ApproveExportModal.js';
 import { DismissNoteModal } from './components/modals/DismissNoteModal.js';
 import { DatabaseStatusModal } from './components/modals/DatabaseStatusModal.js';
-import { PlannedFeatureModal } from './components/modals/PlannedFeatureModal.js';
+import { RoadmapModal } from './components/modals/RoadmapModal.js';
 import { UserManagementModal } from './components/modals/UserManagementModal.js';
 import { isPublicDemoMode } from './utils/publicDemo.js';
+import { DEFAULT_EVIDENCE_LIBRARY, EvidenceDocument } from './utils/evidenceLibrary.js';
 
 import { BRANDS, INITIAL_PRESETS, INITIAL_REVIEWS, Brand } from './data/mockData.js';
 import {
@@ -141,9 +142,12 @@ export default function App() {
   } | null>(null);
   const [dismissFinding, setDismissFinding] = useState<ComplianceFinding | null>(null);
   const [isDbStatusOpen, setIsDbStatusOpen] = useState(false);
-  const [isPlannedOpen, setIsPlannedOpen] = useState(false);
-  const [plannedTitle, setPlannedTitle] = useState('Planned Feature');
+  const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+
+  // Evidence library (in-memory seed for the public demo; server-fed otherwise)
+  const [evidenceLibrary, setEvidenceLibrary] = useState<EvidenceDocument[]>(DEFAULT_EVIDENCE_LIBRARY);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -171,6 +175,10 @@ export default function App() {
         if (Array.isArray(snapshot.reviews)) {
           setReviews(snapshot.reviews);
         }
+      }
+      const evidenceRes = await apiFetch<{ evidence: EvidenceDocument[] }>('/api/evidence');
+      if (evidenceRes.ok && Array.isArray(evidenceRes.data?.evidence)) {
+        setEvidenceLibrary(evidenceRes.data.evidence);
       }
     } catch {
       // Keep existing memory state on transient errors
@@ -360,11 +368,13 @@ export default function App() {
 
   // Approve & file to Review History (Approver or Admin role required)
   const handleConfirmApproval = async () => {
-    if (!approveData) return;
+    if (!approveData || isApproving) return;
+    setIsApproving(true);
 
     if (user?.role === 'reviewer') {
       showToast('Permission denied: Review approval requires Approver or Admin role.');
       setIsApproveOpen(false);
+      setIsApproving(false);
       return;
     }
 
@@ -439,6 +449,7 @@ export default function App() {
       showToast(`Demo dossier #${newRecord.dossierNumber} filed in this session`);
       setIsApproveOpen(false);
       setApproveData(null);
+      setIsApproving(false);
       setActiveTab('history');
       return;
     }
@@ -458,6 +469,7 @@ export default function App() {
     } finally {
       setIsApproveOpen(false);
       setApproveData(null);
+      setIsApproving(false);
       setActiveTab('history');
     }
   };
@@ -610,10 +622,8 @@ export default function App() {
               setIsApproveOpen(true);
             }}
             onOpenDismissModal={(finding) => setDismissFinding(finding)}
-            onOpenPlannedModal={(title) => {
-              setPlannedTitle(title);
-              setIsPlannedOpen(true);
-            }}
+            onOpenRoadmapModal={() => setIsRoadmapOpen(true)}
+            evidenceLibrary={evidenceLibrary}
           />
         )}
 
@@ -655,10 +665,6 @@ export default function App() {
             campaigns={campaigns}
             reviews={reviews}
             isDemoMode={isPublicDemoMode}
-            onOpenPlannedModal={(title) => {
-              setPlannedTitle(title);
-              setIsPlannedOpen(true);
-            }}
           />
         )}
       </main>
@@ -731,10 +737,9 @@ export default function App() {
         onToggleOffline={handleToggleOffline}
       />
 
-      <PlannedFeatureModal
-        isOpen={isPlannedOpen}
-        onClose={() => setIsPlannedOpen(false)}
-        featureTitle={plannedTitle}
+      <RoadmapModal
+        isOpen={isRoadmapOpen}
+        onClose={() => setIsRoadmapOpen(false)}
       />
 
       {user.role === 'admin' && !isPublicDemoMode && (

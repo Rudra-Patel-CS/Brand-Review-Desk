@@ -39,6 +39,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStep, setUploadStep] = useState<string>('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [imageDims, setImageDims] = useState<{ width: number; height: number } | null>(null);
   const selectedPreviewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
     setPreviewUrl(replaceCampaign?.imageUrl || publicAssetUrl('assets/aistudio/screen_81b71146.png'));
     setSelectedFile(null);
     setUploadError(null);
+    setImageDims(replaceCampaign?.imageDimensions || null);
   }, [isOpen, activeBrand.id, replaceCampaign]);
 
   useEffect(() => {
@@ -98,6 +100,14 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
       if (!title) {
         setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
       }
+      // Capture pixel dimensions immediately so the aspect-ratio check can
+      // run even before the preview <img> finishes loading.
+      createImageBitmap(file)
+        .then((bitmap) => {
+          setImageDims({ width: bitmap.width, height: bitmap.height });
+          bitmap.close();
+        })
+        .catch(() => setImageDims(null));
     }
   };
 
@@ -226,7 +236,10 @@ export const UploadCreativeModal: React.FC<UploadCreativeModalProps> = ({
         aspectRatio: replaceCampaign?.aspectRatio || '4/5',
         imageUrl: finalImageUrl,
         assetId,
-        assetMetadata,
+        assetMetadata: assetMetadata
+          ? { ...assetMetadata, width: imageDims?.width, height: imageDims?.height }
+          : assetMetadata,
+        imageDimensions: imageDims || replaceCampaign?.imageDimensions,
         caption,
         ocrText,
         extractedText: ocrText,
